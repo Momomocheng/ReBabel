@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { strToU8, zipSync } from "fflate";
 
 const sampleBookPath = path.join(
   process.cwd(),
@@ -16,6 +17,61 @@ const mockSettings = {
 
 const bookmarkNote =
   "这里的冬天气味和角色语气需要在后续复查时重点确认。";
+
+async function createSampleEpub(testInfo: TestInfo) {
+  const epubPath = testInfo.outputPath("playwright-sample.epub");
+  const archive = zipSync({
+    mimetype: strToU8("application/epub+zip"),
+    "META-INF/container.xml": strToU8(`<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml" />
+  </rootfiles>
+</container>`),
+    "OEBPS/content.opf": strToU8(`<?xml version="1.0" encoding="UTF-8"?>
+<package version="3.0" unique-identifier="bookid" xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="bookid">urn:uuid:playwright-epub-sample</dc:identifier>
+    <dc:title>Playwright EPUB Sample</dc:title>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="chapter-1" href="text/chapter-1.xhtml" media-type="application/xhtml+xml" />
+    <item id="chapter-2" href="text/chapter-2.xhtml" media-type="application/xhtml+xml" />
+  </manifest>
+  <spine>
+    <itemref idref="chapter-1" />
+    <itemref idref="chapter-2" />
+  </spine>
+</package>`),
+    "OEBPS/text/chapter-1.xhtml": strToU8(`<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <title>Opening Scene</title>
+  </head>
+  <body>
+    <h1>Opening Scene</h1>
+    <p>The clock in the hall struck six before anyone spoke.</p>
+    <p>Outside the windows, winter fog pressed against the glass.</p>
+  </body>
+</html>`),
+    "OEBPS/text/chapter-2.xhtml": strToU8(`<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <title>Lantern Street</title>
+  </head>
+  <body>
+    <h1>Lantern Street</h1>
+    <p>Mira kept walking until the bakery lights came into view.</p>
+    <p>She promised herself the letter would be delivered before dawn.</p>
+  </body>
+</html>`),
+  });
+
+  await fs.writeFile(epubPath, archive);
+
+  return epubPath;
+}
 
 function buildMockTranslation(source: string) {
   return `【测试译文】${source
@@ -181,6 +237,44 @@ test("settings persist after reload", async ({ page }, testInfo) => {
   await expect(page.getByLabel("模型名称")).toHaveValue(mockSettings.model);
   await expect(page.getByLabel("Base URL")).toHaveValue(mockSettings.baseUrl);
   await expect(page.locator("#apiKey")).toHaveValue(mockSettings.apiKey);
+});
+
+test("desktop EPUB import reads metadata and preserves chapter structure", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name.includes("mobile"),
+    "The EPUB import workflow is covered on desktop to keep CI runtime focused.",
+  );
+
+  const epubPath = await createSampleEpub(testInfo);
+
+  await page.goto("/library");
+  await page.getByLabel("导入英文原著文件").setInputFiles(epubPath);
+  await expect(page.getByRole("heading", { name: "导入预览与清洗" })).toBeVisible();
+
+  await expect(page.getByLabel("Book Title")).toHaveValue("Playwright EPUB Sample");
+  await expect(
+    page.getByText(/已解析《Playwright EPUB Sample》，共 6 段。请先检查标题和切段结果，再保存到书库。/),
+  ).toBeVisible();
+
+  const chapterCountCard = page.getByText("章节数").locator("..");
+  await expect(chapterCountCard.getByText("2", { exact: true })).toBeVisible();
+
+  await expect(page.getByText("Opening Scene").first()).toBeVisible();
+  await expect(
+    page.getByText("The clock in the hall struck six before anyone spoke."),
+  ).toBeVisible();
+  await attachScreenshot(page, testInfo, "desktop-epub-import-draft");
+
+  await page.getByRole("button", { name: "保存到本地书库" }).click();
+  await expect(page.getByText("已把《Playwright EPUB Sample》保存到本地书库")).toBeVisible();
+  await expect(page.getByText("Playwright EPUB Sample").first()).toBeVisible();
+
+  await page
+    .getByRole("button", { name: "删除 Playwright EPUB Sample" })
+    .click();
+  await expect(page.getByText("书籍已从当前浏览器的本地书库删除。")).toBeVisible();
 });
 
 test("desktop workflow covers import, translation, notes, review checklist, and backup restore", async ({
