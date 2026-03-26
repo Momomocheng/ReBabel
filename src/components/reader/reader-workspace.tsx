@@ -2166,6 +2166,36 @@ export function ReaderWorkspace() {
     );
   }
 
+  function handleSelectSection(sectionIndex: number) {
+    if (!selectedBook) {
+      return;
+    }
+
+    const section = selectedBook.sections[sectionIndex] ?? null;
+
+    if (!section) {
+      return;
+    }
+
+    pendingParagraphNavigationRef.current = {
+      behavior: "smooth",
+      index: section.startParagraphIndex,
+      syncUrl: false,
+    };
+    setActiveParagraphIndex(section.startParagraphIndex);
+    setJumpParagraphInput(String(section.startParagraphIndex + 1));
+    setParagraphFilter("all");
+    setParagraphScope("section");
+    replaceReaderLocation({
+      filter: null,
+      paragraph: section.startParagraphIndex + 1,
+      query: searchInput.trim() || null,
+      scope: "section",
+    });
+    setError("");
+    setNotice(`已切到章节「${section.title}」，并聚焦本章内容。`);
+  }
+
   return (
     <div className="grid gap-8 xl:grid-cols-[0.34fr_0.66fr]">
       <section className="rounded-[34px] border border-[color:var(--line)] bg-[color:var(--panel-strong)]/90 p-7 shadow-[var(--shadow)] backdrop-blur-xl">
@@ -2469,13 +2499,7 @@ export function ReaderWorkspace() {
                           <button
                             key={section.id}
                             type="button"
-                            onClick={() =>
-                              goToParagraph(section.startParagraphIndex, {
-                                hiddenParagraphNotice:
-                                  "当前过滤或章节范围隐藏了该章节起点，已切回全书全部段落。",
-                                revealHiddenParagraph: true,
-                              })
-                            }
+                            onClick={() => handleSelectSection(index)}
                             className={cn(
                               "block w-full rounded-[20px] border px-4 py-3 text-left transition",
                               index === activeSectionIndex

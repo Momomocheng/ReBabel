@@ -277,6 +277,69 @@ test("desktop EPUB import reads metadata and preserves chapter structure", async
   await expect(page.getByText("书籍已从当前浏览器的本地书库删除。")).toBeVisible();
 });
 
+test("EPUB reader section navigation keeps chapter-focused browsing", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name.includes("mobile"),
+    "The chapter navigation workflow is covered on desktop to keep CI runtime focused.",
+  );
+
+  const epubPath = await createSampleEpub(testInfo);
+
+  await page.goto("/library");
+  await page.getByLabel("导入英文原著文件").setInputFiles(epubPath);
+  await expect(page.getByRole("heading", { name: "导入预览与清洗" })).toBeVisible();
+  await page.getByRole("button", { name: "保存到本地书库" }).click();
+  await expect(page.getByText("已把《Playwright EPUB Sample》保存到本地书库")).toBeVisible();
+
+  await page.getByRole("link", { name: "进入阅读器" }).click();
+  await expect(page).toHaveURL(/\/reader/);
+  await expect(page.getByText(/当前读到第 1 段 · 当前章节「Opening Scene」/)).toBeVisible();
+  await expect(page.getByText(/当前章节：Opening Scene · 共 2 节/)).toBeVisible();
+
+  await page.getByRole("button", { name: "只看当前章节" }).click();
+  await expect(page.getByText("已切到当前章节「Opening Scene」范围。")).toBeVisible();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("scope"))
+    .toBe("section");
+
+  await page.getByRole("button", { name: /Lantern Street/ }).click();
+  await expect(page.getByText("已切到章节「Lantern Street」，并聚焦本章内容。")).toBeVisible();
+  await expect(page.getByText(/当前读到第 4 段 · 当前章节「Lantern Street」/)).toBeVisible();
+  await expect(page.getByText("Lantern Street").first()).toBeVisible();
+  await expect(
+    page.getByText("Mira kept walking until the bakery lights came into view."),
+  ).toBeVisible();
+  await expect(
+    page.getByText("The clock in the hall struck six before anyone spoke."),
+  ).not.toBeVisible();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("scope"))
+    .toBe("section");
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("p"))
+    .toBe("4");
+  await attachScreenshot(page, testInfo, "desktop-epub-reader-section-scope");
+
+  await page.reload();
+
+  await expect(page.getByText(/当前读到第 4 段 · 当前章节「Lantern Street」/)).toBeVisible();
+  await expect(
+    page.getByText("Mira kept walking until the bakery lights came into view."),
+  ).toBeVisible();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("scope"))
+    .toBe("section");
+
+  await page.getByRole("link", { name: "返回书库" }).click();
+  await expect(page).toHaveURL(/\/library/);
+  await page
+    .getByRole("button", { name: "删除 Playwright EPUB Sample" })
+    .click();
+  await expect(page.getByText("书籍已从当前浏览器的本地书库删除。")).toBeVisible();
+});
+
 test("desktop workflow covers import, translation, notes, review checklist, and backup restore", async ({
   page,
 }, testInfo) => {
