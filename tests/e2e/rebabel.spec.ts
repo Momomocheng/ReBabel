@@ -85,6 +85,49 @@ async function installMockTranslationRoute(page: Page) {
   });
 }
 
+async function importSampleBook(
+  page: Page,
+  title: string,
+  options?: {
+    screenshotName?: string;
+    testInfo?: TestInfo;
+  },
+) {
+  await page.goto("/library");
+  await page.getByLabel("导入英文原著文件").setInputFiles(sampleBookPath);
+  await expect(page.getByRole("heading", { name: "导入预览与清洗" })).toBeVisible();
+
+  await page.getByLabel("Book Title").fill(title);
+
+  if (options?.testInfo && options.screenshotName) {
+    await attachScreenshot(page, options.testInfo, options.screenshotName);
+  }
+
+  await page.getByRole("button", { name: "保存到本地书库" }).click();
+  await expect(page.getByText(`已把《${title}》保存到本地书库`)).toBeVisible();
+}
+
+async function translateCurrentBook(
+  page: Page,
+  options?: {
+    screenshotName?: string;
+    testInfo?: TestInfo;
+  },
+) {
+  await page
+    .getByRole("button", {
+      name: /开始批量翻译|继续翻译剩余段落|从阅读位置继续翻译/,
+    })
+    .click();
+
+  await expect(page.getByText(/翻译完成：/)).toBeVisible();
+  await expect(page.getByText("【测试译文】", { exact: false }).first()).toBeVisible();
+
+  if (options?.testInfo && options.screenshotName) {
+    await attachScreenshot(page, options.testInfo, options.screenshotName);
+  }
+}
+
 test("core pages render without overflow on current viewport", async ({
   page,
 }, testInfo) => {
@@ -153,18 +196,10 @@ test("desktop workflow covers import, translation, notes, review checklist, and 
 
   await installMockTranslationRoute(page);
   await configureSettings(page);
-  await page.goto("/library");
-
-  await page.getByLabel("导入英文原著文件").setInputFiles(sampleBookPath);
-  await expect(page.getByRole("heading", { name: "导入预览与清洗" })).toBeVisible();
-
-  await page.getByLabel("Book Title").fill("Playwright Sample Book");
-  await attachScreenshot(page, testInfo, "desktop-import-draft");
-
-  await page.getByRole("button", { name: "保存到本地书库" }).click();
-  await expect(
-    page.getByText("已把《Playwright Sample Book》保存到本地书库"),
-  ).toBeVisible();
+  await importSampleBook(page, "Playwright Sample Book", {
+    screenshotName: "desktop-import-draft",
+    testInfo,
+  });
 
   const [backupDownload] = await Promise.all([
     page.waitForEvent("download"),
@@ -182,15 +217,10 @@ test("desktop workflow covers import, translation, notes, review checklist, and 
   expect(backupPayload.type).toBe("rebabel-book");
   expect(backupPayload.book?.title).toBe("Playwright Sample Book");
 
-  await page
-    .getByRole("button", {
-      name: /开始批量翻译|继续翻译剩余段落|从阅读位置继续翻译/,
-    })
-    .click();
-
-  await expect(page.getByText(/翻译完成：/)).toBeVisible();
-  await expect(page.getByText("【测试译文】", { exact: false }).first()).toBeVisible();
-  await attachScreenshot(page, testInfo, "desktop-library-translated");
+  await translateCurrentBook(page, {
+    screenshotName: "desktop-library-translated",
+    testInfo,
+  });
 
   await page.getByRole("link", { name: "进入阅读器" }).click();
   await expect(page).toHaveURL(/\/reader/);
@@ -260,4 +290,67 @@ test("desktop workflow covers import, translation, notes, review checklist, and 
   await page.getByLabel("导入整书备份 JSON").setInputFiles(backupPath);
   await expect(page.getByText(/已导入《Playwright Sample Book》/)).toBeVisible();
   await expect(page.getByText("Playwright Sample Book").first()).toBeVisible();
+});
+
+test("reader keeps search filter and deep link after reload", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name.includes("mobile"),
+    "The deep-link workflow is covered on desktop to keep CI runtime controlled.",
+  );
+  test.setTimeout(120_000);
+
+  await installMockTranslationRoute(page);
+  await configureSettings(page);
+  await importSampleBook(page, "Reader Deep Link Sample", {
+    testInfo,
+    screenshotName: "desktop-reader-deep-link-import",
+  });
+  await translateCurrentBook(page);
+
+  await page.getByRole("link", { name: "进入阅读器" }).click();
+  await expect(page).toHaveURL(/\/reader/);
+
+  await page.getByLabel("站内搜索").fill("冬天");
+  await page.getByRole("button", { name: "更新搜索链接" }).click();
+  await expect(page.getByText(/已更新搜索链接，当前命中 2 段。/)).toBeVisible();
+
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("q"))
+    .toBe("冬天");
+
+  await page.getByRole("button", { name: /搜索命中 \(\d+\)/ }).click();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("filter"))
+    .toBe("search-results");
+  await expect(page.getByText("当前读到第 2 段")).toBeVisible();
+
+  await page.getByRole("button", { name: "下一处命中" }).click();
+  await expect(page.getByText("当前读到第 5 段")).toBeVisible();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("p"))
+    .toBe("5");
+
+  await page.reload();
+
+  await expect(page.getByLabel("站内搜索")).toHaveValue("冬天");
+  await expect(page.getByText("当前读到第 5 段")).toBeVisible();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("q"))
+    .toBe("冬天");
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("filter"))
+    .toBe("search-results");
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("p"))
+    .toBe("5");
+  await attachScreenshot(page, testInfo, "desktop-reader-deep-link-restored");
+
+  await page.getByRole("link", { name: "返回书库" }).click();
+  await expect(page).toHaveURL(/\/library/);
+  await page
+    .getByRole("button", { name: "删除 Reader Deep Link Sample" })
+    .click();
+  await expect(page.getByText("书籍已从当前浏览器的本地书库删除。")).toBeVisible();
 });
