@@ -499,7 +499,7 @@ test("EPUB chapter notes create bookmarks and survive reload", async ({
     .poll(() => new URL(page.url()).searchParams.get("p"))
     .toBe("6");
 
-  await page.getByRole("button", { name: "跳转" }).click();
+  await page.getByRole("button", { name: "跳转", exact: true }).click();
   await expect(page.getByText(/当前读到第 6 段 · 当前章节「Lantern Street」/)).toBeVisible();
 
   await page.getByRole("link", { name: "返回书库" }).click();
