@@ -222,7 +222,7 @@ test("desktop workflow covers import, translation, notes, review checklist, and 
   await page.getByLabel("站内搜索").fill("冬天");
   await page.getByRole("button", { name: "更新搜索链接" }).click();
   await expect(page.getByText(/已更新搜索链接，当前命中 \d+ 段。/)).toBeVisible();
-  await expect(page.getByText("中文命中")).toBeVisible();
+  await expect(page.getByText("中文命中").first()).toBeVisible();
 
   await page.getByRole("button", { name: "标记已复核" }).first().click();
   await expect(page.getByText("已将第 1 段标记为已复核。")).toBeVisible();
@@ -240,7 +240,7 @@ test("desktop workflow covers import, translation, notes, review checklist, and 
   ).toBeVisible();
 
   await page.getByLabel("导入复查清单 JSON").setInputFiles(checklistPath);
-  await expect(page.getByText(/导入预览/)).toBeVisible();
+  await expect(page.getByText(/导入预览 ·/)).toBeVisible();
   await page.getByRole("button", { name: "确认导入到当前书" }).click();
   await expect(page.getByText(/已导入复查清单/)).toBeVisible();
   await attachScreenshot(page, testInfo, "desktop-reader-review-imported");
