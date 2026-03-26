@@ -310,6 +310,51 @@ function resolveSearchNavigationIndex(
   return searchResults.length - 1;
 }
 
+function findFilteredParagraphPosition(
+  paragraphs: BookRecord["paragraphs"],
+  activeParagraphIndex: number,
+) {
+  return paragraphs.findIndex((paragraph) => paragraph.index === activeParagraphIndex);
+}
+
+function resolveFilteredParagraphIndex(
+  paragraphs: BookRecord["paragraphs"],
+  activeParagraphIndex: number,
+  direction: SearchNavigationDirection,
+) {
+  if (paragraphs.length === 0) {
+    return null;
+  }
+
+  const activePosition = findFilteredParagraphPosition(
+    paragraphs,
+    activeParagraphIndex,
+  );
+
+  if (activePosition >= 0) {
+    return direction === "next"
+      ? paragraphs[(activePosition + 1) % paragraphs.length]?.index ?? null
+      : paragraphs[(activePosition - 1 + paragraphs.length) % paragraphs.length]?.index ??
+          null;
+  }
+
+  if (direction === "next") {
+    return (
+      paragraphs.find((paragraph) => paragraph.index > activeParagraphIndex)?.index ??
+      paragraphs[0]?.index ??
+      null
+    );
+  }
+
+  for (let index = paragraphs.length - 1; index >= 0; index -= 1) {
+    if (paragraphs[index]!.index < activeParagraphIndex) {
+      return paragraphs[index]!.index;
+    }
+  }
+
+  return paragraphs[paragraphs.length - 1]?.index ?? null;
+}
+
 function buildReaderHref(
   bookId: string,
   options?: {
@@ -821,6 +866,18 @@ export function ReaderWorkspace() {
     () => findSearchResultIndex(searchResults, activeParagraphIndex),
     [activeParagraphIndex, searchResults],
   );
+  const activeFilteredParagraphPosition = useMemo(
+    () => findFilteredParagraphPosition(filteredParagraphs, activeParagraphIndex),
+    [activeParagraphIndex, filteredParagraphs],
+  );
+  const hasNarrowedReaderView =
+    paragraphFilter !== "all" || paragraphScope === "section";
+  const filteredNavigationLabel =
+    paragraphFilter === "all"
+      ? paragraphScope === "section"
+        ? "当前章节"
+        : "当前可见段落"
+      : selectedParagraphFilterOption.label;
   const handleDeepLinkScroll = useEffectEvent((index: number) => {
     scrollToParagraph(index, "auto");
   });
@@ -872,6 +929,18 @@ export function ReaderWorkspace() {
     if (normalizedKey === "n" && searchResults.length > 0) {
       event.preventDefault();
       handleJumpBetweenSearchResults(event.shiftKey ? "previous" : "next");
+      return;
+    }
+
+    if (event.key === "[" && hasNarrowedReaderView && filteredParagraphs.length > 1) {
+      event.preventDefault();
+      handleJumpBetweenFilteredParagraphs("previous");
+      return;
+    }
+
+    if (event.key === "]" && hasNarrowedReaderView && filteredParagraphs.length > 1) {
+      event.preventDefault();
+      handleJumpBetweenFilteredParagraphs("next");
       return;
     }
 
@@ -1392,6 +1461,39 @@ export function ReaderWorkspace() {
     });
     setNotice(
       `已跳到第 ${targetResult.paragraphIndex + 1} 段（搜索命中 ${targetResultIndex + 1}/${searchResults.length}）。`,
+    );
+  }
+
+  function handleJumpBetweenFilteredParagraphs(
+    direction: SearchNavigationDirection,
+  ) {
+    if (filteredParagraphs.length === 0) {
+      return;
+    }
+
+    const targetParagraphIndex = resolveFilteredParagraphIndex(
+      filteredParagraphs,
+      activeParagraphIndex,
+      direction,
+    );
+
+    if (targetParagraphIndex === null) {
+      return;
+    }
+
+    const nextPosition = findFilteredParagraphPosition(
+      filteredParagraphs,
+      targetParagraphIndex,
+    );
+
+    goToParagraph(targetParagraphIndex, {
+      behavior: "smooth",
+      revealHiddenParagraph: false,
+    });
+    setNotice(
+      `已跳到第 ${targetParagraphIndex + 1} 段（${filteredNavigationLabel} ${
+        nextPosition + 1
+      }/${filteredParagraphs.length}）。`,
     );
   }
 
@@ -2359,7 +2461,7 @@ export function ReaderWorkspace() {
                   )}
 
                   <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
-                    快捷键：`j` / `k` 或 `↑` / `↓` 切换段落，`n` / `Shift+n` 在搜索命中间跳转，`/` 聚焦搜索框。
+                    快捷键：`j` / `k` 或 `↑` / `↓` 切换段落，`[` / `]` 在当前过滤结果里前后跳转，`n` / `Shift+n` 在搜索命中间跳转，`/` 聚焦搜索框。
                   </p>
 
                   {normalizedSearchQuery && searchResults.length > 0 ? (
@@ -2512,6 +2614,33 @@ export function ReaderWorkspace() {
                     })}
                   </div>
                 </div>
+                {hasNarrowedReaderView ? (
+                  <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <p className="text-xs leading-6 text-[color:var(--muted)]">
+                      {activeFilteredParagraphPosition >= 0
+                        ? `当前位于 ${filteredNavigationLabel} ${activeFilteredParagraphPosition + 1}/${filteredParagraphs.length}。`
+                        : `当前视图共有 ${filteredParagraphs.length} 条结果。`}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleJumpBetweenFilteredParagraphs("previous")}
+                        disabled={filteredParagraphs.length <= 1}
+                        className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                      >
+                        上一条待办
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleJumpBetweenFilteredParagraphs("next")}
+                        disabled={filteredParagraphs.length <= 1}
+                        className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                      >
+                        下一条待办
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               <div
