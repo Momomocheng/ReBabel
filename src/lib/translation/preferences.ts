@@ -1,3 +1,5 @@
+import type { TranslationErrorCategory } from "@/lib/translation/error-classification";
+
 export const DEFAULT_TRANSLATION_CONTEXT_SIZE = 2;
 export const MIN_TRANSLATION_CONTEXT_SIZE = 0;
 export const MAX_TRANSLATION_CONTEXT_SIZE = 6;
@@ -26,9 +28,12 @@ export type TranslationBatchSessionStatus =
 export type TranslationBatchSession = {
   batchScope: TranslationBatchScope;
   bookId: string;
+  errorCategory?: TranslationErrorCategory | null;
   failedCount: number;
   lastProcessedParagraphIndex: number | null;
   processedCount: number;
+  queueKind?: "scope" | "failure-category";
+  queueLabel?: string;
   queueTotal: number;
   startedAt: string;
   status: TranslationBatchSessionStatus;

@@ -79,6 +79,10 @@ import {
   parseGlossaryImport,
 } from "@/lib/translation/glossary";
 import {
+  classifyTranslationError,
+  type TranslationErrorCategory,
+} from "@/lib/translation/error-classification";
+import {
   DEFAULT_TRANSLATION_BATCH_SCOPE,
   DEFAULT_TRANSLATION_CONTEXT_SIZE,
   MAX_TRANSLATION_CONTEXT_SIZE,
@@ -254,6 +258,17 @@ type ImportDraft = {
   parsedSections: BookSection[];
   parsedTitle: string;
   title: string;
+};
+
+type FailedParagraphGroup = {
+  category: TranslationErrorCategory;
+  count: number;
+  hint: string;
+  label: string;
+  latestMessage: string;
+  paragraphIndexes: number[];
+  requiresSettingsChange: boolean;
+  retryable: boolean;
 };
 
 const BATCH_SCOPE_OPTIONS: Array<{
@@ -768,6 +783,53 @@ export function LibraryWorkspace() {
           },
     [selectedBook],
   );
+  const failedParagraphGroups = useMemo(() => {
+    if (!selectedBook) {
+      return [] as FailedParagraphGroup[];
+    }
+
+    const groupedFailures = new Map<TranslationErrorCategory, FailedParagraphGroup>();
+
+    selectedBook.paragraphs.forEach((paragraph) => {
+      if (paragraph.translationStatus !== "error") {
+        return;
+      }
+
+      const classification = classifyTranslationError(paragraph.translationError);
+      const existingGroup = groupedFailures.get(classification.category);
+
+      if (existingGroup) {
+        existingGroup.count += 1;
+        existingGroup.paragraphIndexes.push(paragraph.index);
+        existingGroup.latestMessage = paragraph.translationError?.trim() || existingGroup.latestMessage;
+        return;
+      }
+
+      groupedFailures.set(classification.category, {
+        category: classification.category,
+        count: 1,
+        hint: classification.hint,
+        label: classification.label,
+        latestMessage: paragraph.translationError?.trim() || "翻译失败。",
+        paragraphIndexes: [paragraph.index],
+        requiresSettingsChange: classification.requiresSettingsChange,
+        retryable: classification.retryable,
+      });
+    });
+
+    return [...groupedFailures.values()].sort((left, right) => {
+      if (right.count !== left.count) {
+        return right.count - left.count;
+      }
+
+      return left.label.localeCompare(right.label, "zh-CN");
+    });
+  }, [selectedBook]);
+  const failedParagraphGroupByCategory = useMemo(
+    () =>
+      new Map(failedParagraphGroups.map((group) => [group.category, group])),
+    [failedParagraphGroups],
+  );
   const selectedBookBatchSession = useMemo(
     () =>
       lastBatchSession && selectedBook && lastBatchSession.bookId === selectedBook.id
@@ -877,16 +939,40 @@ export function LibraryWorkspace() {
         : null,
     [selectedBookBatchSession],
   );
+  const selectedBookBatchSessionQueueKind =
+    selectedBookBatchSession?.queueKind ?? "scope";
+  const selectedBookBatchSessionQueueLabel =
+    selectedBookBatchSession?.queueLabel?.trim() ||
+    selectedBookBatchSessionScopeOption?.label ||
+    "批量任务";
   const batchActionLabel = useMemo(
     () => getBatchActionLabel(normalizedBatchScope, translationStats.translatedCount),
     [normalizedBatchScope, translationStats.translatedCount],
   );
   const resumableBatchQueue = useMemo(
-    () =>
-      selectedBook && selectedBookBatchSession
-        ? buildBatchTranslationQueue(selectedBook, selectedBookBatchSession.batchScope)
-        : [],
-    [selectedBook, selectedBookBatchSession],
+    () => {
+      if (!selectedBook || !selectedBookBatchSession) {
+        return [];
+      }
+
+      if (
+        selectedBookBatchSessionQueueKind === "failure-category" &&
+        selectedBookBatchSession.errorCategory
+      ) {
+        return (
+          failedParagraphGroupByCategory.get(selectedBookBatchSession.errorCategory)
+            ?.paragraphIndexes ?? []
+        );
+      }
+
+      return buildBatchTranslationQueue(selectedBook, selectedBookBatchSession.batchScope);
+    },
+    [
+      failedParagraphGroupByCategory,
+      selectedBook,
+      selectedBookBatchSession,
+      selectedBookBatchSessionQueueKind,
+    ],
   );
   const resumableBatchQueuePreviewParagraphs = useMemo(
     () => resumableBatchQueue.slice(0, 5),
@@ -1608,6 +1694,10 @@ export function LibraryWorkspace() {
   }
 
   async function handleTranslateBook(options?: {
+    errorCategory?: TranslationErrorCategory | null;
+    queueKind?: "scope" | "failure-category";
+    queueLabel?: string;
+    queueOverride?: number[];
     resumeSession?: boolean;
     scopeOverride?: TranslationBatchScope;
   }) {
@@ -1622,12 +1712,21 @@ export function LibraryWorkspace() {
     }
 
     const batchScopeSnapshot = options?.scopeOverride ?? normalizedBatchScope;
+    const queueKind = options?.queueKind ?? "scope";
     const requestDelayMsSnapshot = normalizedRequestDelayMs;
-    const queue = buildBatchTranslationQueue(selectedBook, batchScopeSnapshot);
+    const batchScopeOption =
+      BATCH_SCOPE_OPTIONS.find((option) => option.value === batchScopeSnapshot) ??
+      BATCH_SCOPE_OPTIONS[0];
+    const queueLabel = options?.queueLabel?.trim() || batchScopeOption.label;
+    const queue =
+      options?.queueOverride ?? buildBatchTranslationQueue(selectedBook, batchScopeSnapshot);
     const currentBatchSession =
       options?.resumeSession &&
       selectedBookBatchSession &&
-      selectedBookBatchSession.batchScope === batchScopeSnapshot
+      selectedBookBatchSession.batchScope === batchScopeSnapshot &&
+      (selectedBookBatchSession.queueKind ?? "scope") === queueKind &&
+      (selectedBookBatchSession.errorCategory ?? null) ===
+        (options?.errorCategory ?? null)
         ? selectedBookBatchSession
         : null;
 
@@ -1639,7 +1738,11 @@ export function LibraryWorkspace() {
           updatedAt: new Date().toISOString(),
         });
       }
-      setNotice(getEmptyBatchQueueNotice(batchScopeSnapshot));
+      setNotice(
+        queueKind === "failure-category"
+          ? `当前没有「${queueLabel}」可重试段落。`
+          : getEmptyBatchQueueNotice(batchScopeSnapshot),
+      );
       setError("");
       return;
     }
@@ -1667,9 +1770,12 @@ export function LibraryWorkspace() {
       batchSession = {
         batchScope: batchScopeSnapshot,
         bookId: selectedBook.id,
+        errorCategory: options?.errorCategory ?? null,
         failedCount: 0,
         lastProcessedParagraphIndex: null,
         processedCount: 0,
+        queueKind,
+        queueLabel,
         queueTotal: queue.length,
         startedAt: sessionTimestamp,
         status: "running",
@@ -1730,9 +1836,13 @@ export function LibraryWorkspace() {
       });
 
       setNotice(
-        failedCount > 0
-          ? `翻译完成：成功 ${successCount} 段，失败 ${failedCount} 段。再次运行会重试失败段落。`
-          : `翻译完成：本次新增 ${successCount} 段译文。`,
+        queueKind === "failure-category"
+          ? failedCount > 0
+            ? `「${queueLabel}」重试完成：成功 ${successCount} 段，失败 ${failedCount} 段。`
+            : `「${queueLabel}」重试完成：本次成功处理 ${successCount} 段。`
+          : failedCount > 0
+            ? `翻译完成：成功 ${successCount} 段，失败 ${failedCount} 段。再次运行会重试失败段落。`
+            : `翻译完成：本次新增 ${successCount} 段译文。`,
       );
     } catch (translationError) {
       if (isAbortError(translationError)) {
@@ -1741,7 +1851,11 @@ export function LibraryWorkspace() {
           status: "stopped",
           updatedAt: new Date().toISOString(),
         });
-        setNotice("翻译已停止。再次开始会从未完成或失败的段落继续。");
+        setNotice(
+          queueKind === "failure-category"
+            ? `已停止「${queueLabel}」这批重试。稍后可以继续从剩余失败段落接着跑。`
+            : "翻译已停止。再次开始会从未完成或失败的段落继续。",
+        );
       } else {
         setLastBatchSession({
           ...batchSession,
@@ -1818,8 +1932,30 @@ export function LibraryWorkspace() {
 
     setBatchScope(selectedBookBatchSession.batchScope);
     void handleTranslateBook({
+      errorCategory: selectedBookBatchSession.errorCategory ?? null,
+      queueKind: selectedBookBatchSession.queueKind ?? "scope",
+      queueLabel:
+        selectedBookBatchSession.queueLabel?.trim() ||
+        selectedBookBatchSessionScopeOption?.label ||
+        "批量任务",
       resumeSession: true,
       scopeOverride: selectedBookBatchSession.batchScope,
+    });
+  }
+
+  function handleRetryFailedCategory(category: TranslationErrorCategory) {
+    const group = failedParagraphGroupByCategory.get(category);
+
+    if (!group) {
+      return;
+    }
+
+    void handleTranslateBook({
+      errorCategory: category,
+      queueKind: "failure-category",
+      queueLabel: group.label,
+      queueOverride: group.paragraphIndexes,
+      scopeOverride: "failed",
     });
   }
 
@@ -2612,7 +2748,7 @@ export function LibraryWorkspace() {
                                 {getBatchSessionStatusLabel(selectedBookBatchSession.status)}
                               </span>
                               <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
-                                {selectedBookBatchSessionScopeOption?.label ?? "批量任务"}
+                                {selectedBookBatchSessionQueueLabel}
                               </span>
                               <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
                                 已处理 {selectedBookBatchSession.processedCount}/
@@ -2707,6 +2843,135 @@ export function LibraryWorkspace() {
                             当前已经没有可续跑段落了。你可以清除这条记录，或切换新的批量范围重新开始。
                           </p>
                         )}
+                      </div>
+                    ) : null}
+
+                    {failedParagraphGroups.length > 0 ? (
+                      <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] p-4">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                              失败聚合
+                            </p>
+                            <p className="mt-2 text-sm font-semibold text-[color:var(--foreground)]">
+                              当前共有 {failedParagraphGroups.length} 类失败原因，合计{" "}
+                              {translationStats.failedCount} 段失败记录。
+                            </p>
+                            <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                              先看是配置问题、限流，还是临时网络波动，再决定是去设置页、调请求间隔，还是直接重试这一类失败段。
+                            </p>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setBatchScope("failed")}
+                            disabled={!preferencesHydrated || isTranslating}
+                            className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                          >
+                            切到失败段落范围
+                          </button>
+                        </div>
+
+                        <div className="mt-4 space-y-3">
+                          {failedParagraphGroups.map((group) => {
+                            const firstParagraphIndex = group.paragraphIndexes[0] ?? 0;
+                            const isActiveFailureRetry =
+                              isTranslating &&
+                              selectedBookBatchSession?.status === "running" &&
+                              (selectedBookBatchSession.queueKind ?? "scope") ===
+                                "failure-category" &&
+                              selectedBookBatchSession.errorCategory === group.category;
+
+                            return (
+                              <div
+                                key={group.category}
+                                className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4"
+                              >
+                                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="text-sm font-semibold">
+                                        {group.label}
+                                      </span>
+                                      <span className="rounded-full bg-stone-200 px-3 py-1 text-[11px] font-semibold text-stone-700">
+                                        {group.count} 段
+                                      </span>
+                                      {group.retryable ? (
+                                        <span className="rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-semibold text-emerald-800">
+                                          可直接重试
+                                        </span>
+                                      ) : (
+                                        <span className="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-semibold text-amber-800">
+                                          建议先调整配置
+                                        </span>
+                                      )}
+                                      {isActiveFailureRetry ? (
+                                        <span className="rounded-full bg-[color:var(--accent-soft)] px-3 py-1 text-[11px] font-semibold text-[color:var(--accent-strong)]">
+                                          当前正在重试这类错误
+                                        </span>
+                                      ) : null}
+                                    </div>
+
+                                    <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                                      {group.hint}
+                                    </p>
+                                    <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                                      最近错误：{group.latestMessage}
+                                    </p>
+
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      {group.paragraphIndexes.slice(0, 5).map((index) => (
+                                        <span
+                                          key={`${group.category}-${index}`}
+                                          className="rounded-full bg-[color:var(--panel)] px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]"
+                                        >
+                                          第 {index + 1} 段
+                                        </span>
+                                      ))}
+                                      {group.paragraphIndexes.length > 5 ? (
+                                        <span className="rounded-full bg-stone-200 px-3 py-1 text-[11px] font-semibold text-stone-700">
+                                          还有 {group.paragraphIndexes.length - 5} 段
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex flex-wrap gap-2">
+                                    <Link
+                                      href={buildLibraryHref(selectedBook.id, {
+                                        paragraph: firstParagraphIndex + 1,
+                                      })}
+                                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                                    >
+                                      定位首段
+                                    </Link>
+                                    {group.requiresSettingsChange ? (
+                                      <Link
+                                        href="/settings"
+                                        className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                                      >
+                                        去检查设置
+                                      </Link>
+                                    ) : null}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRetryFailedCategory(group.category)}
+                                      disabled={
+                                        !group.retryable ||
+                                        !hasTranslationConfig ||
+                                        isTranslating
+                                      }
+                                      className="inline-flex items-center justify-center gap-2 rounded-full bg-[color:var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[color:var(--accent-strong)] disabled:cursor-not-allowed disabled:bg-stone-300"
+                                    >
+                                      <WandSparkles className="h-4 w-4" />
+                                      只重试这类
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     ) : null}
                   </div>
