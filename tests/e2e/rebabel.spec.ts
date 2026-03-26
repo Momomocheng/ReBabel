@@ -388,7 +388,10 @@ test("EPUB chapter-scoped search links reopen the same filtered reading state", 
   await page.getByRole("button", { name: "下一处命中" }).click();
   await expect(page.getByText("当前读到第 6 段")).toBeVisible();
   await expect(
-    page.getByText("She promised herself the letter would be delivered before dawn."),
+    page.getByText(
+      "She promised herself the letter would be delivered before dawn.",
+      { exact: true },
+    ),
   ).toBeVisible();
   await expect(
     page.getByText("The clock in the hall struck six before anyone spoke."),
@@ -417,7 +420,10 @@ test("EPUB chapter-scoped search links reopen the same filtered reading state", 
   await expect(sharedPage.getByText(/当前读到第 6 段 · 当前章节「Lantern Street」/)).toBeVisible();
   await expect(sharedPage.getByText("搜索命中 (2)")).toBeVisible();
   await expect(
-    sharedPage.getByText("She promised herself the letter would be delivered before dawn."),
+    sharedPage.getByText(
+      "She promised herself the letter would be delivered before dawn.",
+      { exact: true },
+    ),
   ).toBeVisible();
   await expect(
     sharedPage.getByText("The clock in the hall struck six before anyone spoke."),
