@@ -76,6 +76,7 @@ import {
   buildSectionsFromParagraphSectionIds,
   createDefaultBookSections,
   getSectionIndexForParagraph,
+  getSectionParagraphRange,
 } from "@/lib/books/sections";
 import { parseEpubFile } from "@/lib/books/epub";
 import { deleteBook, listBooks, saveBook } from "@/lib/db/rebabel-db";
@@ -282,6 +283,7 @@ function buildReaderHref(
       | "unreviewed-translated"
       | null;
     paragraph?: number | null;
+    scope?: "section" | null;
   },
 ) {
   const params = new URLSearchParams();
@@ -294,6 +296,10 @@ function buildReaderHref(
 
   if (options?.filter) {
     params.set("filter", options.filter);
+  }
+
+  if (options?.scope === "section") {
+    params.set("scope", "section");
   }
 
   return `/reader?${params.toString()}`;
@@ -344,6 +350,20 @@ type FailedParagraphGroup = {
   paragraphIndexes: number[];
   requiresSettingsChange: boolean;
   retryable: boolean;
+};
+
+type ReviewQueueSectionGroup = {
+  firstNeedsRevisionParagraphIndex: number | null;
+  firstOpenParagraphIndex: number | null;
+  firstUnreviewedParagraphIndex: number | null;
+  needsRevisionCount: number;
+  openCount: number;
+  range: ReturnType<typeof getSectionParagraphRange>;
+  reviewedCount: number;
+  sectionIndex: number;
+  title: string;
+  translatedCount: number;
+  unreviewedCount: number;
 };
 
 type PreflightSummary = {
@@ -902,6 +922,84 @@ export function LibraryWorkspace() {
             unreviewedCount: 0,
           },
     [selectedBook],
+  );
+  const reviewQueueSections = useMemo(() => {
+    if (!selectedBook) {
+      return [] as ReviewQueueSectionGroup[];
+    }
+
+    const groups = selectedBook.sections.flatMap((section, sectionIndex) => {
+      const range = getSectionParagraphRange(
+        selectedBook.sections,
+        sectionIndex,
+        selectedBook.paragraphs.length,
+      );
+      const sectionParagraphs = selectedBook.paragraphs.filter(
+        (paragraph) =>
+          paragraph.index >= range.startParagraphIndex &&
+          paragraph.index <= range.endParagraphIndex,
+      );
+      const translatedParagraphs = sectionParagraphs.filter(
+        (paragraph) => paragraph.translationStatus === "done",
+      );
+
+      if (translatedParagraphs.length === 0) {
+        return [];
+      }
+
+      const needsRevisionParagraphs = translatedParagraphs.filter(
+        (paragraph) => paragraph.reviewStatus === "needs-revision",
+      );
+      const reviewedParagraphs = translatedParagraphs.filter(
+        (paragraph) => paragraph.reviewStatus === "reviewed",
+      );
+      const unreviewedParagraphs = translatedParagraphs.filter(
+        (paragraph) => paragraph.reviewStatus === "unreviewed",
+      );
+
+      return [
+        {
+          firstNeedsRevisionParagraphIndex:
+            needsRevisionParagraphs[0]?.index ?? null,
+          firstOpenParagraphIndex:
+            needsRevisionParagraphs[0]?.index ??
+            unreviewedParagraphs[0]?.index ??
+            null,
+          firstUnreviewedParagraphIndex: unreviewedParagraphs[0]?.index ?? null,
+          needsRevisionCount: needsRevisionParagraphs.length,
+          openCount: needsRevisionParagraphs.length + unreviewedParagraphs.length,
+          range,
+          reviewedCount: reviewedParagraphs.length,
+          sectionIndex,
+          title: section.title,
+          translatedCount: translatedParagraphs.length,
+          unreviewedCount: unreviewedParagraphs.length,
+        } satisfies ReviewQueueSectionGroup,
+      ];
+    });
+
+    return groups.sort((left, right) => {
+      if (right.needsRevisionCount !== left.needsRevisionCount) {
+        return right.needsRevisionCount - left.needsRevisionCount;
+      }
+
+      if (right.unreviewedCount !== left.unreviewedCount) {
+        return right.unreviewedCount - left.unreviewedCount;
+      }
+
+      return left.sectionIndex - right.sectionIndex;
+    });
+  }, [selectedBook]);
+  const openReviewQueueSections = useMemo(
+    () => reviewQueueSections.filter((group) => group.openCount > 0),
+    [reviewQueueSections],
+  );
+  const completedReviewSectionCount = useMemo(
+    () =>
+      reviewQueueSections.filter(
+        (group) => group.openCount === 0 && group.reviewedCount > 0,
+      ).length,
+    [reviewQueueSections],
   );
   const failedParagraphGroups = useMemo(() => {
     if (!selectedBook) {
@@ -3483,6 +3581,159 @@ export function LibraryWorkspace() {
                       </div>
                     ) : null}
 
+                    {openReviewQueueSections.length > 0 ? (
+                      <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] p-4">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                              复查队列
+                            </p>
+                            <p className="mt-2 text-sm font-semibold text-[color:var(--foreground)]">
+                              当前还有 {openReviewQueueSections.length} 个章节需要继续复查，合计{" "}
+                              {reviewStats.unreviewedCount + reviewStats.needsRevisionCount} 段待办。
+                            </p>
+                            <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                              优先清掉“待修订”段落，再批量处理“待复查”段落，会比全书来回跳更稳。每个入口都会直接带你进入对应章节和过滤视图。
+                            </p>
+                            {completedReviewSectionCount > 0 ? (
+                              <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                                另有 {completedReviewSectionCount} 个已译章节已经全部复核完成。
+                              </p>
+                            ) : null}
+                          </div>
+
+                          <Link
+                            href={
+                              selectedBook
+                                ? buildReaderHref(selectedBook.id, {
+                                    filter: "needs-revision",
+                                  })
+                                : "/reader"
+                            }
+                            className="inline-flex items-center justify-center gap-2 rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                          >
+                            <PanelsTopLeft className="h-4 w-4" />
+                            先看全书待修订
+                          </Link>
+                        </div>
+
+                        <div className="mt-4 space-y-3">
+                          {openReviewQueueSections.map((group) => (
+                            <div
+                              key={`review-queue-${group.sectionIndex}`}
+                              className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4"
+                            >
+                              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-sm font-semibold">
+                                      {group.title}
+                                    </span>
+                                    <span className="rounded-full bg-stone-200 px-3 py-1 text-[11px] font-semibold text-stone-700">
+                                      第 {group.range.startParagraphIndex + 1} 段 - 第{" "}
+                                      {group.range.endParagraphIndex + 1} 段
+                                    </span>
+                                    {group.needsRevisionCount > 0 ? (
+                                      <span className="rounded-full bg-rose-100 px-3 py-1 text-[11px] font-semibold text-rose-700">
+                                        待修订 {group.needsRevisionCount}
+                                      </span>
+                                    ) : null}
+                                    {group.unreviewedCount > 0 ? (
+                                      <span className="rounded-full bg-violet-100 px-3 py-1 text-[11px] font-semibold text-violet-800">
+                                        待复查 {group.unreviewedCount}
+                                      </span>
+                                    ) : null}
+                                    {group.reviewedCount > 0 ? (
+                                      <span className="rounded-full bg-sky-100 px-3 py-1 text-[11px] font-semibold text-sky-800">
+                                        已复核 {group.reviewedCount}
+                                      </span>
+                                    ) : null}
+                                  </div>
+
+                                  <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                                    本章已译 {group.translatedCount} 段，其中仍有 {group.openCount} 段需要继续处理。
+                                  </p>
+
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    {group.firstNeedsRevisionParagraphIndex !== null ? (
+                                      <span className="rounded-full bg-[color:var(--panel)] px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
+                                        首个待修订：第 {group.firstNeedsRevisionParagraphIndex + 1} 段
+                                      </span>
+                                    ) : null}
+                                    {group.firstUnreviewedParagraphIndex !== null ? (
+                                      <span className="rounded-full bg-[color:var(--panel)] px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
+                                        首个待复查：第 {group.firstUnreviewedParagraphIndex + 1} 段
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </div>
+
+                                <div className="flex flex-wrap gap-2">
+                                  {group.firstOpenParagraphIndex !== null ? (
+                                    <Link
+                                      href={buildLibraryHref(selectedBook.id, {
+                                        paragraph: group.firstOpenParagraphIndex + 1,
+                                      })}
+                                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                                    >
+                                      定位首个任务
+                                    </Link>
+                                  ) : null}
+                                  {group.firstNeedsRevisionParagraphIndex !== null ? (
+                                    <Link
+                                      href={buildReaderHref(selectedBook.id, {
+                                        filter: "needs-revision",
+                                        paragraph:
+                                          group.firstNeedsRevisionParagraphIndex + 1,
+                                        scope: "section",
+                                      })}
+                                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                                    >
+                                      本章待修订
+                                    </Link>
+                                  ) : null}
+                                  {group.firstUnreviewedParagraphIndex !== null ? (
+                                    <Link
+                                      href={buildReaderHref(selectedBook.id, {
+                                        filter: "unreviewed-translated",
+                                        paragraph:
+                                          group.firstUnreviewedParagraphIndex + 1,
+                                        scope: "section",
+                                      })}
+                                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                                    >
+                                      本章待复查
+                                    </Link>
+                                  ) : null}
+                                  <Link
+                                    href={buildReaderHref(selectedBook.id, {
+                                      paragraph: group.range.startParagraphIndex + 1,
+                                      scope: "section",
+                                    })}
+                                    className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                                  >
+                                    整章复查
+                                  </Link>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : reviewStats.translatedCount > 0 ? (
+                      <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] p-4">
+                        <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                          复查队列
+                        </p>
+                        <p className="mt-2 text-sm font-semibold text-[color:var(--foreground)]">
+                          当前没有待复查或待修订的章节任务。
+                        </p>
+                        <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                          已译内容要么已经全部复核完成，要么还没有形成需要人工复查的稳定译文。
+                        </p>
+                      </div>
+                    ) : null}
+
                     {translationReviewSample.eligibleParagraphCount > 0 ||
                     translationReviewSample.skippedReviewedCount > 0 ? (
                       <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] p-4">
@@ -3632,6 +3883,7 @@ export function LibraryWorkspace() {
                                               )
                                             : "unreviewed-translated",
                                           paragraph: candidate.paragraphIndex + 1,
+                                          scope: "section",
                                         })}
                                         className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
                                       >

@@ -150,6 +150,12 @@ function parseReaderParagraphFilter(
   }
 }
 
+function parseReaderParagraphScope(
+  rawValue: string | null | undefined,
+): ReaderParagraphScope {
+  return rawValue === "section" ? "section" : "book";
+}
+
 function isParagraphIndexInRange(
   index: number,
   range: { endParagraphIndex: number; startParagraphIndex: number } | null,
@@ -310,6 +316,7 @@ function buildReaderHref(
     filter?: ReaderParagraphFilter | null;
     paragraph?: number | null;
     query?: string | null;
+    scope?: ReaderParagraphScope | null;
   },
 ) {
   const params = new URLSearchParams();
@@ -332,6 +339,10 @@ function buildReaderHref(
     (options.filter !== "search-results" || Boolean(normalizedQuery))
   ) {
     params.set("filter", options.filter);
+  }
+
+  if (options?.scope === "section") {
+    params.set("scope", "section");
   }
 
   return `/reader?${params.toString()}`;
@@ -415,6 +426,9 @@ export function ReaderWorkspace() {
   const paragraphFilterFromUrl = parseReaderParagraphFilter(
     searchParams.get("filter"),
   );
+  const paragraphScopeFromUrl = parseReaderParagraphScope(
+    searchParams.get("scope"),
+  );
 
   const [books, setBooks] = useState<BookRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -428,7 +442,7 @@ export function ReaderWorkspace() {
   const [paragraphFilter, setParagraphFilter] =
     useState<ReaderParagraphFilter>(paragraphFilterFromUrl);
   const [paragraphScope, setParagraphScope] =
-    useState<ReaderParagraphScope>("book");
+    useState<ReaderParagraphScope>(paragraphScopeFromUrl);
   const [searchInput, setSearchInput] = useState(searchQueryFromUrl);
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -466,9 +480,14 @@ export function ReaderWorkspace() {
   const activeSectionIndex = useMemo(
     () =>
       selectedBook
-        ? getSectionIndexForParagraph(selectedBook.sections, activeParagraphIndex)
+        ? getSectionIndexForParagraph(
+            selectedBook.sections,
+            paragraphScope === "section" && paragraphIndexFromUrl !== null
+              ? paragraphIndexFromUrl
+              : activeParagraphIndex,
+          )
         : 0,
-    [activeParagraphIndex, selectedBook],
+    [activeParagraphIndex, paragraphIndexFromUrl, paragraphScope, selectedBook],
   );
   const activeSection = selectedBook?.sections[activeSectionIndex] ?? null;
   const activeSectionRange = useMemo(
@@ -739,9 +758,20 @@ export function ReaderWorkspace() {
   const paragraphFilterCounts = useMemo(
     () => ({
       ...baseParagraphFilterCounts,
-      "search-results": searchResults.length,
+      "search-results":
+        paragraphScope === "section"
+          ? activeSectionParagraphs.filter((paragraph) =>
+              searchHitParagraphIndexes.has(paragraph.index),
+            ).length
+          : searchResults.length,
     }),
-    [baseParagraphFilterCounts, searchResults.length],
+    [
+      activeSectionParagraphs,
+      baseParagraphFilterCounts,
+      paragraphScope,
+      searchHitParagraphIndexes,
+      searchResults.length,
+    ],
   );
   const filteredParagraphs = useMemo(() => {
     if (!selectedBook) {
@@ -934,11 +964,12 @@ export function ReaderWorkspace() {
   useEffect(() => {
     if (paragraphFilterFromUrl === "search-results" && !normalizedSearchQuery) {
       setParagraphFilter("all");
-      return;
+    } else {
+      setParagraphFilter(paragraphFilterFromUrl);
     }
 
-    setParagraphFilter(paragraphFilterFromUrl);
-  }, [normalizedSearchQuery, paragraphFilterFromUrl]);
+    setParagraphScope(paragraphScopeFromUrl);
+  }, [normalizedSearchQuery, paragraphFilterFromUrl, paragraphScopeFromUrl]);
 
   useEffect(() => {
     setBookmarkNoteInput(currentBookmark?.note ?? "");
@@ -954,16 +985,26 @@ export function ReaderWorkspace() {
     if (!hasSelectedBook) {
       router.replace(
         buildReaderHref(books[0].id, {
+          filter: paragraphFilterFromUrl,
           paragraph:
             paragraphIndexFromUrl !== null ? paragraphIndexFromUrl + 1 : null,
           query: searchQueryFromUrl || null,
+          scope: paragraphScopeFromUrl,
         }),
         {
           scroll: false,
         },
       );
     }
-  }, [books, paragraphIndexFromUrl, router, searchQueryFromUrl, selectedBookIdFromUrl]);
+  }, [
+    books,
+    paragraphFilterFromUrl,
+    paragraphIndexFromUrl,
+    paragraphScopeFromUrl,
+    router,
+    searchQueryFromUrl,
+    selectedBookIdFromUrl,
+  ]);
 
   useEffect(() => {
     if (!selectedBook) {
@@ -1033,6 +1074,7 @@ export function ReaderWorkspace() {
     filter?: ReaderParagraphFilter | null;
     paragraph?: number | null;
     query?: string | null;
+    scope?: ReaderParagraphScope | null;
   }) {
     const bookId = options?.bookId ?? selectedBook?.id;
 
@@ -1054,6 +1096,10 @@ export function ReaderWorkspace() {
             : options.paragraph,
         query:
           options?.query === undefined ? searchInput.trim() || null : options.query,
+        scope:
+          options?.scope === undefined
+            ? paragraphScope
+            : options.scope,
       }),
       {
         scroll: false,
@@ -1072,6 +1118,7 @@ export function ReaderWorkspace() {
       filter: paragraphFilter,
       paragraph: null,
       query: searchInput.trim() || null,
+      scope: null,
     });
     setScrollProgress(0);
     setError("");
@@ -1373,6 +1420,10 @@ export function ReaderWorkspace() {
         shareUrl.searchParams.set("filter", paragraphFilter);
       }
 
+      if (paragraphScope === "section") {
+        shareUrl.searchParams.set("scope", "section");
+      }
+
       await navigator.clipboard.writeText(shareUrl.toString());
       setError("");
       setNotice(`已复制第 ${activeParagraphIndex + 1} 段的阅读链接。`);
@@ -1517,6 +1568,12 @@ export function ReaderWorkspace() {
 
   function handleParagraphScopeChange(nextScope: ReaderParagraphScope) {
     setParagraphScope(nextScope);
+    replaceReaderLocation({
+      filter: paragraphFilter === "all" ? null : paragraphFilter,
+      paragraph: activeParagraphIndex + 1,
+      query: searchInput.trim() || null,
+      scope: nextScope === "book" ? null : nextScope,
+    });
     setError("");
     setNotice(
       nextScope === "section"
@@ -1538,6 +1595,7 @@ export function ReaderWorkspace() {
       filter: nextFilter === "all" ? null : nextFilter,
       paragraph: activeParagraphIndex + 1,
       query: searchInput.trim() || null,
+      scope: "section",
     });
     setError("");
     setNotice(
