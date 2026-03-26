@@ -17,6 +17,7 @@ const mockSettings = {
 
 const bookmarkNote =
   "这里的冬天气味和角色语气需要在后续复查时重点确认。";
+const epubBookmarkNote = "Lantern Street 的回信伏笔要回头检查。";
 
 async function createSampleEpub(testInfo: TestInfo) {
   const epubPath = testInfo.outputPath("playwright-sample.epub");
@@ -436,6 +437,70 @@ test("EPUB chapter-scoped search links reopen the same filtered reading state", 
     .toBe("section");
   await attachScreenshot(sharedPage, testInfo, "desktop-epub-reader-shared-search-scope");
   await sharedPage.close();
+
+  await page.getByRole("link", { name: "返回书库" }).click();
+  await expect(page).toHaveURL(/\/library/);
+  await page
+    .getByRole("button", { name: "删除 Playwright EPUB Sample" })
+    .click();
+  await expect(page.getByText("书籍已从当前浏览器的本地书库删除。")).toBeVisible();
+});
+
+test("EPUB chapter notes create bookmarks and survive reload", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name.includes("mobile"),
+    "The chapter note workflow is covered on desktop to keep CI runtime focused.",
+  );
+
+  const epubPath = await createSampleEpub(testInfo);
+
+  await page.goto("/library");
+  await page.getByLabel("导入英文原著文件").setInputFiles(epubPath);
+  await expect(page.getByRole("heading", { name: "导入预览与清洗" })).toBeVisible();
+  await page.getByRole("button", { name: "保存到本地书库" }).click();
+  await expect(page.getByText("已把《Playwright EPUB Sample》保存到本地书库")).toBeVisible();
+
+  await page.getByRole("link", { name: "进入阅读器" }).click();
+  await expect(page).toHaveURL(/\/reader/);
+
+  await page.getByRole("button", { name: /Lantern Street/ }).click();
+  await expect(page.getByText("已切到章节「Lantern Street」，并聚焦本章内容。")).toBeVisible();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("scope"))
+    .toBe("section");
+
+  await page.getByLabel("跳转到指定段落").fill("6");
+  await page.getByRole("button", { name: "跳转到该段" }).click();
+  await expect(page.getByText(/当前读到第 6 段 · 当前章节「Lantern Street」/)).toBeVisible();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("p"))
+    .toBe("6");
+
+  await page.getByLabel("当前段落批注").fill(epubBookmarkNote);
+  await page.getByRole("button", { name: "保存批注" }).click();
+  await expect(page.getByText("已保存第 6 段批注。")).toBeVisible();
+  await expect(page.getByRole("button", { name: "取消当前书签" })).toBeVisible();
+  await expect(page.getByText(epubBookmarkNote)).toBeVisible();
+  await expect(page.getByText("Paragraph 6").last()).toBeVisible();
+  await attachScreenshot(page, testInfo, "desktop-epub-bookmark-note-saved");
+
+  await page.reload();
+
+  await expect(page.getByText(/当前读到第 6 段 · 当前章节「Lantern Street」/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "取消当前书签" })).toBeVisible();
+  await expect(page.getByLabel("当前段落批注")).toHaveValue(epubBookmarkNote);
+  await expect(page.getByText(epubBookmarkNote)).toBeVisible();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("scope"))
+    .toBe("section");
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("p"))
+    .toBe("6");
+
+  await page.getByRole("button", { name: "跳转" }).click();
+  await expect(page.getByText(/当前读到第 6 段 · 当前章节「Lantern Street」/)).toBeVisible();
 
   await page.getByRole("link", { name: "返回书库" }).click();
   await expect(page).toHaveURL(/\/library/);
