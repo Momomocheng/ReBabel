@@ -232,6 +232,28 @@ export function updateBookParagraphReviewStatus(
   });
 }
 
+export function updateBookParagraphReviewStatuses(
+  book: BookRecord,
+  paragraphIndexes: number[],
+  reviewStatus: TranslationReviewStatus,
+) {
+  const paragraphIndexSet = new Set(paragraphIndexes);
+
+  return {
+    ...book,
+    updatedAt: new Date().toISOString(),
+    paragraphs: book.paragraphs.map((paragraph) =>
+      paragraphIndexSet.has(paragraph.index) &&
+      paragraph.translationStatus === "done"
+        ? normalizeParagraph({
+            ...paragraph,
+            reviewStatus,
+          })
+        : paragraph,
+    ),
+  };
+}
+
 export function clearBookTranslations(book: BookRecord) {
   return {
     ...book,

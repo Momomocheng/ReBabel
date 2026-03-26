@@ -33,6 +33,7 @@ import {
   getBookTranslationStats,
   updateBookParagraph,
   updateBookParagraphReviewStatus,
+  updateBookParagraphReviewStatuses,
 } from "@/lib/books/book-record";
 import {
   getTranslationReviewStatusClassName,
@@ -1970,6 +1971,61 @@ export function LibraryWorkspace() {
     }
   }
 
+  async function handleUpdateSectionReviewStatus(
+    sectionGroup: ReviewQueueSectionGroup,
+    reviewStatus: Extract<TranslationReviewStatus, "reviewed" | "unreviewed">,
+  ) {
+    if (!selectedBook) {
+      return;
+    }
+
+    const paragraphIndexes = selectedBook.paragraphs
+      .filter(
+        (paragraph) =>
+          paragraph.translationStatus === "done" &&
+          paragraph.index >= sectionGroup.range.startParagraphIndex &&
+          paragraph.index <= sectionGroup.range.endParagraphIndex &&
+          paragraph.reviewStatus !== reviewStatus,
+      )
+      .map((paragraph) => paragraph.index);
+
+    if (paragraphIndexes.length === 0) {
+      return;
+    }
+
+    const shouldProceed =
+      reviewStatus === "reviewed"
+        ? window.confirm(
+            sectionGroup.needsRevisionCount > 0
+              ? `当前章节「${sectionGroup.title}」还有 ${sectionGroup.needsRevisionCount} 段标记为待修订。继续会把本章 ${paragraphIndexes.length} 段已译内容全部标记为已复核，是否继续？`
+              : `确认把当前章节「${sectionGroup.title}」的 ${paragraphIndexes.length} 段已译内容全部标记为已复核吗？`,
+          )
+        : window.confirm(
+            `确认把当前章节「${sectionGroup.title}」的 ${paragraphIndexes.length} 段复查标记清回待复查吗？`,
+          );
+
+    if (!shouldProceed) {
+      return;
+    }
+
+    try {
+      const nextBook = updateBookParagraphReviewStatuses(
+        selectedBook,
+        paragraphIndexes,
+        reviewStatus,
+      );
+      await persistBook(nextBook);
+      setNotice(
+        reviewStatus === "reviewed"
+          ? `已将「${sectionGroup.title}」的 ${paragraphIndexes.length} 段已译内容标记为已复核。`
+          : `已将「${sectionGroup.title}」的 ${paragraphIndexes.length} 段复查状态清回待复查。`,
+      );
+      setError("");
+    } catch {
+      setError("批量更新章节复查状态失败，请稍后重试。");
+    }
+  }
+
   async function runParagraphTranslation({
     book,
     controller,
@@ -3830,6 +3886,35 @@ export function LibraryWorkspace() {
                                     >
                                       整章复查
                                     </Link>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void handleUpdateSectionReviewStatus(
+                                          group,
+                                          "reviewed",
+                                        )
+                                      }
+                                      disabled={isTranslating || group.openCount === 0}
+                                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                                    >
+                                      整章标记已复核
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void handleUpdateSectionReviewStatus(
+                                          group,
+                                          "unreviewed",
+                                        )
+                                      }
+                                      disabled={
+                                        isTranslating ||
+                                        group.reviewedCount + group.needsRevisionCount === 0
+                                      }
+                                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                                    >
+                                      清回待复查
+                                    </button>
                                   </div>
                                 </div>
                               </div>
