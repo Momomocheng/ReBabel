@@ -452,6 +452,64 @@ function getBatchActionLabel(
   }
 }
 
+function formatDuration(ms: number) {
+  if (ms < 1000) {
+    return "不到 1 秒";
+  }
+
+  const totalSeconds = Math.round(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours} 小时 ${minutes} 分`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes} 分 ${seconds} 秒`;
+  }
+
+  return `${seconds} 秒`;
+}
+
+function buildParagraphRangeSummary(indexes: number[]) {
+  if (indexes.length === 0) {
+    return "";
+  }
+
+  const ranges: Array<{
+    end: number;
+    start: number;
+  }> = [];
+
+  indexes.forEach((index) => {
+    const lastRange = ranges[ranges.length - 1];
+
+    if (!lastRange || index > lastRange.end + 1) {
+      ranges.push({
+        end: index,
+        start: index,
+      });
+      return;
+    }
+
+    lastRange.end = index;
+  });
+
+  const visibleRanges = ranges.slice(0, 4).map((range) =>
+    range.start === range.end
+      ? `第 ${range.start + 1} 段`
+      : `第 ${range.start + 1}-${range.end + 1} 段`,
+  );
+
+  if (ranges.length > 4) {
+    visibleRanges.push(`另外还有 ${ranges.length - 4} 段区间`);
+  }
+
+  return visibleRanges.join("、");
+}
+
 function getBatchSessionStatusLabel(status: TranslationBatchSession["status"]) {
   switch (status) {
     case "completed":
@@ -800,6 +858,10 @@ export function LibraryWorkspace() {
     () => batchQueuePreview.slice(0, 5),
     [batchQueuePreview],
   );
+  const batchQueueRangeSummary = useMemo(
+    () => buildParagraphRangeSummary(batchQueuePreview),
+    [batchQueuePreview],
+  );
   const selectedBatchScopeOption = useMemo(
     () =>
       BATCH_SCOPE_OPTIONS.find((option) => option.value === normalizedBatchScope) ??
@@ -830,6 +892,10 @@ export function LibraryWorkspace() {
     () => resumableBatchQueue.slice(0, 5),
     [resumableBatchQueue],
   );
+  const resumableBatchQueueRangeSummary = useMemo(
+    () => buildParagraphRangeSummary(resumableBatchQueue),
+    [resumableBatchQueue],
+  );
   const selectedBookBatchSessionProgressPercent = useMemo(() => {
     if (!selectedBookBatchSession || selectedBookBatchSession.queueTotal <= 0) {
       return 0;
@@ -843,6 +909,59 @@ export function LibraryWorkspace() {
       100,
     );
   }, [selectedBookBatchSession]);
+  const currentBatchQueueMinimumWaitMs = useMemo(
+    () => Math.max(batchQueuePreview.length - 1, 0) * normalizedRequestDelayMs,
+    [batchQueuePreview.length, normalizedRequestDelayMs],
+  );
+  const selectedBookBatchSessionObservedParagraphMs = useMemo(() => {
+    if (!selectedBookBatchSession || selectedBookBatchSession.processedCount <= 0) {
+      return null;
+    }
+
+    const elapsedMs =
+      new Date(selectedBookBatchSession.updatedAt).getTime() -
+      new Date(selectedBookBatchSession.startedAt).getTime();
+
+    if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) {
+      return null;
+    }
+
+    return elapsedMs / selectedBookBatchSession.processedCount;
+  }, [selectedBookBatchSession]);
+  const currentBatchQueueObservedEstimateMs = useMemo(() => {
+    if (
+      !selectedBookBatchSessionObservedParagraphMs ||
+      !selectedBookBatchSession ||
+      selectedBookBatchSession.batchScope !== normalizedBatchScope ||
+      batchQueuePreview.length === 0
+    ) {
+      return null;
+    }
+
+    return Math.round(batchQueuePreview.length * selectedBookBatchSessionObservedParagraphMs);
+  }, [
+    batchQueuePreview.length,
+    normalizedBatchScope,
+    selectedBookBatchSession,
+    selectedBookBatchSessionObservedParagraphMs,
+  ]);
+  const resumableBatchQueueObservedEstimateMs = useMemo(() => {
+    if (
+      !selectedBookBatchSessionObservedParagraphMs ||
+      !selectedBookBatchSession ||
+      resumableBatchQueue.length === 0
+    ) {
+      return null;
+    }
+
+    return Math.round(
+      resumableBatchQueue.length * selectedBookBatchSessionObservedParagraphMs,
+    );
+  }, [
+    resumableBatchQueue.length,
+    selectedBookBatchSession,
+    selectedBookBatchSessionObservedParagraphMs,
+  ]);
   const canResumeBatchSession = Boolean(
     selectedBookBatchSession &&
       selectedBookBatchSession.status !== "completed" &&
@@ -2438,6 +2557,22 @@ export function LibraryWorkspace() {
                         <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
                           当前请求间隔为 {normalizedRequestDelayMs} ms。
                         </p>
+                        {batchQueueRangeSummary ? (
+                          <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                            覆盖区间：{batchQueueRangeSummary}。
+                          </p>
+                        ) : null}
+                        {batchQueuePreview.length > 0 ? (
+                          <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                            按当前间隔，至少还需 {formatDuration(currentBatchQueueMinimumWaitMs)}
+                            。
+                            {currentBatchQueueObservedEstimateMs
+                              ? ` 如果按这本书上次同范围的处理速度估算，整批大约需要 ${formatDuration(
+                                  currentBatchQueueObservedEstimateMs,
+                                )}。`
+                              : ""}
+                          </p>
+                        ) : null}
                         {batchQueuePreviewParagraphs.length > 0 ? (
                           <div className="mt-3 flex flex-wrap gap-2">
                             {batchQueuePreviewParagraphs.map((index) => (
@@ -2498,6 +2633,21 @@ export function LibraryWorkspace() {
                                   } 段。`
                                 : ""}
                             </p>
+                            {selectedBookBatchSessionObservedParagraphMs ? (
+                              <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                                上次平均每段约 {formatDuration(selectedBookBatchSessionObservedParagraphMs)}。
+                                {resumableBatchQueueObservedEstimateMs
+                                  ? ` 以同样速度估算，剩余队列大约还需 ${formatDuration(
+                                      resumableBatchQueueObservedEstimateMs,
+                                    )}。`
+                                  : ""}
+                              </p>
+                            ) : null}
+                            {resumableBatchQueueRangeSummary ? (
+                              <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                                当前续跑区间：{resumableBatchQueueRangeSummary}。
+                              </p>
+                            ) : null}
                           </div>
 
                           <div className="flex flex-wrap gap-2">
