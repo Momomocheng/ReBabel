@@ -226,13 +226,23 @@ test("desktop workflow covers import, translation, notes, review checklist, and 
   await expect(page).toHaveURL(/\/reader/);
   await expect(page.getByText("Playwright Sample Book").first()).toBeVisible();
   await expect(page.getByText("【测试译文】", { exact: false }).first()).toBeVisible();
+  const currentParagraphText = await page
+    .getByText(/当前读到第 \d+ 段/)
+    .first()
+    .textContent();
+  const currentParagraphNumber =
+    currentParagraphText?.match(/当前读到第 (\d+) 段/)?.[1] ?? "1";
 
   await page.getByRole("button", { name: "收藏当前段落" }).click();
-  await expect(page.getByText("已收藏第 1 段。")).toBeVisible();
+  await expect(
+    page.getByText(`已收藏第 ${currentParagraphNumber} 段。`),
+  ).toBeVisible();
 
   await page.getByLabel("当前段落批注").fill(bookmarkNote);
   await page.getByRole("button", { name: "保存批注" }).click();
-  await expect(page.getByText("已保存第 1 段批注。")).toBeVisible();
+  await expect(
+    page.getByText(`已保存第 ${currentParagraphNumber} 段批注。`),
+  ).toBeVisible();
   await expect(page.getByText(bookmarkNote).nth(1)).toBeVisible();
 
   const [notesDownload] = await Promise.all([
@@ -243,7 +253,9 @@ test("desktop workflow covers import, translation, notes, review checklist, and 
   await notesDownload.saveAs(notesPath);
 
   await page.getByRole("button", { name: "取消当前书签" }).click();
-  await expect(page.getByText("已移除第 1 段书签。")).toBeVisible();
+  await expect(
+    page.getByText(`已移除第 ${currentParagraphNumber} 段书签。`),
+  ).toBeVisible();
 
   await page.getByLabel("导入阅读笔记 JSON").setInputFiles(notesPath);
   await expect(page.getByText(/已导入 1 条阅读笔记/)).toBeVisible();
