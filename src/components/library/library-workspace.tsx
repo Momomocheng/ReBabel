@@ -257,6 +257,54 @@ function getReviewStatusNoticeLabel(status: TranslationReviewStatus) {
   }
 }
 
+function getReviewQueueSectionStatus(options: {
+  needsRevisionCount: number;
+  unreviewedCount: number;
+}): ReviewQueueSectionStatus {
+  if (options.needsRevisionCount > 0) {
+    return "needs-revision";
+  }
+
+  if (options.unreviewedCount > 0) {
+    return "unreviewed";
+  }
+
+  return "reviewed";
+}
+
+function getReviewQueueSectionStatusLabel(status: ReviewQueueSectionStatus) {
+  switch (status) {
+    case "needs-revision":
+      return "待修订优先";
+    case "reviewed":
+      return "已清";
+    default:
+      return "待复查";
+  }
+}
+
+function getReviewQueueSectionStatusClassName(status: ReviewQueueSectionStatus) {
+  switch (status) {
+    case "needs-revision":
+      return "bg-rose-100 text-rose-700";
+    case "reviewed":
+      return "bg-sky-100 text-sky-800";
+    default:
+      return "bg-violet-100 text-violet-800";
+  }
+}
+
+function getReviewQueueSectionProgressClassName(status: ReviewQueueSectionStatus) {
+  switch (status) {
+    case "needs-revision":
+      return "bg-rose-500";
+    case "reviewed":
+      return "bg-sky-500";
+    default:
+      return "bg-violet-500";
+  }
+}
+
 function buildLibraryHref(
   bookId: string,
   options?: {
@@ -353,6 +401,8 @@ type FailedParagraphGroup = {
   retryable: boolean;
 };
 
+type ReviewQueueSectionStatus = "needs-revision" | "reviewed" | "unreviewed";
+
 type ReviewQueueSectionGroup = {
   firstNeedsRevisionParagraphIndex: number | null;
   firstOpenParagraphIndex: number | null;
@@ -361,16 +411,20 @@ type ReviewQueueSectionGroup = {
   openCount: number;
   range: ReturnType<typeof getSectionParagraphRange>;
   reviewedCount: number;
+  reviewedPercent: number;
   sectionIndex: number;
+  status: ReviewQueueSectionStatus;
   title: string;
   translatedCount: number;
   unreviewedCount: number;
 };
 
 type ReviewQueueSummary = {
+  blockedSectionCount: number;
   completionPercent: number;
   completedSectionCount: number;
   eligibleSectionCount: number;
+  inReviewSectionCount: number;
   openParagraphCount: number;
   openSectionCount: number;
 };
@@ -965,6 +1019,16 @@ export function LibraryWorkspace() {
       const unreviewedParagraphs = translatedParagraphs.filter(
         (paragraph) => paragraph.reviewStatus === "unreviewed",
       );
+      const reviewedPercent =
+        translatedParagraphs.length === 0
+          ? 0
+          : Math.round(
+              (reviewedParagraphs.length / translatedParagraphs.length) * 100,
+            );
+      const status = getReviewQueueSectionStatus({
+        needsRevisionCount: needsRevisionParagraphs.length,
+        unreviewedCount: unreviewedParagraphs.length,
+      });
 
       return [
         {
@@ -979,7 +1043,9 @@ export function LibraryWorkspace() {
           openCount: needsRevisionParagraphs.length + unreviewedParagraphs.length,
           range,
           reviewedCount: reviewedParagraphs.length,
+          reviewedPercent,
           sectionIndex,
+          status,
           title: section.title,
           translatedCount: translatedParagraphs.length,
           unreviewedCount: unreviewedParagraphs.length,
@@ -999,6 +1065,13 @@ export function LibraryWorkspace() {
       return left.sectionIndex - right.sectionIndex;
     });
   }, [selectedBook]);
+  const reviewCoverageSections = useMemo(
+    () =>
+      [...reviewQueueSections].sort(
+        (left, right) => left.sectionIndex - right.sectionIndex,
+      ),
+    [reviewQueueSections],
+  );
   const openReviewQueueSections = useMemo(
     () => reviewQueueSections.filter((group) => group.openCount > 0),
     [reviewQueueSections],
@@ -1017,6 +1090,9 @@ export function LibraryWorkspace() {
   const reviewQueueSummary = useMemo(
     () =>
       ({
+        blockedSectionCount: reviewQueueSections.filter(
+          (group) => group.status === "needs-revision",
+        ).length,
         completionPercent:
           reviewQueueSections.length === 0
             ? 0
@@ -1025,6 +1101,9 @@ export function LibraryWorkspace() {
               ),
         completedSectionCount: completedReviewSectionCount,
         eligibleSectionCount: reviewQueueSections.length,
+        inReviewSectionCount: reviewQueueSections.filter(
+          (group) => group.status === "unreviewed",
+        ).length,
         openParagraphCount: openReviewQueueSections.reduce(
           (sum, group) => sum + group.openCount,
           0,
@@ -1034,7 +1113,7 @@ export function LibraryWorkspace() {
     [
       completedReviewSectionCount,
       openReviewQueueSections,
-      reviewQueueSections.length,
+      reviewQueueSections,
     ],
   );
   const failedParagraphGroups = useMemo(() => {
@@ -3672,7 +3751,7 @@ export function LibraryWorkspace() {
                       </div>
                     ) : null}
 
-                    {openReviewQueueSections.length > 0 ? (
+                    {reviewQueueSections.length > 0 ? (
                       <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] p-4">
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                           <div>
@@ -3680,38 +3759,95 @@ export function LibraryWorkspace() {
                               复查队列
                             </p>
                             <p className="mt-2 text-sm font-semibold text-[color:var(--foreground)]">
-                              当前还有 {openReviewQueueSections.length} 个章节需要继续复查，合计{" "}
-                              {reviewStats.unreviewedCount + reviewStats.needsRevisionCount} 段待办。
+                              {openReviewQueueSections.length > 0
+                                ? `当前还有 ${openReviewQueueSections.length} 个章节需要继续复查，合计 ${
+                                    reviewStats.unreviewedCount +
+                                    reviewStats.needsRevisionCount
+                                  } 段待办。`
+                                : `当前 ${reviewQueueSummary.eligibleSectionCount} 个已译章节都已经复核完成。`}
                             </p>
                             <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
-                              优先清掉“待修订”段落，再批量处理“待复查”段落，会比全书来回跳更稳。每个入口都会直接带你进入对应章节和过滤视图。
+                              章节分布会按书中顺序展示整本书的复查状态，先定位“待修订优先”的章节，再处理只剩待复查的部分，会比来回切视图更稳。
                             </p>
-                            <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
-                              当前按“待修订优先，其次待复查，再按章节顺序”排序。
-                            </p>
-                            {completedReviewSectionCount > 0 ? (
+                            {openReviewQueueSections.length > 0 ? (
                               <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
-                                另有 {completedReviewSectionCount} 个已译章节已经全部复核完成。
+                                下方待办列表仍按“待修订优先，其次待复查，再按章节顺序”排序，每个入口都会直接带你进入对应章节和过滤视图。
                               </p>
-                            ) : null}
+                            ) : (
+                              <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                                你仍然可以从章节卡片重新进入任意章节，抽检或重新打开整章阅读。
+                              </p>
+                            )}
                           </div>
 
-                          <Link
-                            href={
-                              selectedBook
-                                ? buildReaderHref(selectedBook.id, {
-                                    filter: "needs-revision",
-                                  })
-                                : "/reader"
-                            }
-                            className="inline-flex items-center justify-center gap-2 rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
-                          >
-                            <PanelsTopLeft className="h-4 w-4" />
-                            先看全书待修订
-                          </Link>
+                          <div className="flex flex-wrap gap-2">
+                            {reviewQueueSummary.blockedSectionCount > 0 ? (
+                              <Link
+                                href={
+                                  selectedBook
+                                    ? buildReaderHref(selectedBook.id, {
+                                        filter: "needs-revision",
+                                      })
+                                    : "/reader"
+                                }
+                                className="inline-flex items-center justify-center gap-2 rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                              >
+                                <PanelsTopLeft className="h-4 w-4" />
+                                先看全书待修订
+                              </Link>
+                            ) : null}
+                            {reviewQueueSummary.inReviewSectionCount > 0 ? (
+                              <Link
+                                href={
+                                  selectedBook
+                                    ? buildReaderHref(selectedBook.id, {
+                                        filter: "unreviewed-translated",
+                                      })
+                                    : "/reader"
+                                }
+                                className="inline-flex items-center justify-center gap-2 rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                              >
+                                <PanelsTopLeft className="h-4 w-4" />
+                                先看全书待复查
+                              </Link>
+                            ) : null}
+                            <Link
+                              href={
+                                selectedBook
+                                  ? buildReaderHref(selectedBook.id)
+                                  : "/reader"
+                              }
+                              className="inline-flex items-center justify-center gap-2 rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                            >
+                              <PanelsTopLeft className="h-4 w-4" />
+                              打开阅读器
+                            </Link>
+                          </div>
                         </div>
 
-                        <div className="mt-4 grid gap-3 md:grid-cols-3">
+                        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                          <div className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4">
+                            <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                              待修订章节
+                            </p>
+                            <p className="mt-2 text-2xl font-semibold">
+                              {reviewQueueSummary.blockedSectionCount}
+                            </p>
+                            <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                              至少还有一段标记为待修订
+                            </p>
+                          </div>
+                          <div className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4">
+                            <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                              待复查章节
+                            </p>
+                            <p className="mt-2 text-2xl font-semibold">
+                              {reviewQueueSummary.inReviewSectionCount}
+                            </p>
+                            <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                              只剩待复查、暂无待修订的章节
+                            </p>
+                          </div>
                           <div className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4">
                             <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
                               已清章节
@@ -3726,17 +3862,6 @@ export function LibraryWorkspace() {
                           </div>
                           <div className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4">
                             <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
-                              待办章节
-                            </p>
-                            <p className="mt-2 text-2xl font-semibold">
-                              {reviewQueueSummary.openSectionCount}
-                            </p>
-                            <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
-                              仍有待修订或待复查内容的章节数
-                            </p>
-                          </div>
-                          <div className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4">
-                            <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
                               待办段落
                             </p>
                             <p className="mt-2 text-2xl font-semibold">
@@ -3746,6 +3871,34 @@ export function LibraryWorkspace() {
                               待修订 {reviewStats.needsRevisionCount} 段，待复查{" "}
                               {reviewStats.unreviewedCount} 段
                             </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-white/80 p-4">
+                          <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+                            <div>
+                              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                                章节分布
+                              </p>
+                              <p className="mt-2 text-sm font-semibold text-[color:var(--foreground)]">
+                                按书中顺序查看每章复查状态，哪里卡住一眼就能看出来。
+                              </p>
+                            </div>
+                            <p className="text-xs leading-6 text-[color:var(--muted)]">
+                              颜色说明：玫瑰 = 有待修订，紫色 = 待复查，蓝色 = 已清。
+                            </p>
+                          </div>
+
+                          <div className="mt-4 max-h-[32rem] overflow-y-auto pr-1">
+                            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                              {reviewCoverageSections.map((group) => (
+                                <ReviewCoverageSectionCard
+                                  key={`review-coverage-${group.sectionIndex}`}
+                                  bookId={selectedBook.id}
+                                  group={group}
+                                />
+                              ))}
+                            </div>
                           </div>
                         </div>
 
@@ -3774,16 +3927,9 @@ export function LibraryWorkspace() {
                           </div>
                         ) : null}
 
-                        <div className="mt-4 space-y-3">
-                          {openReviewQueueSections.map((group) => {
-                            const reviewedPercent =
-                              group.translatedCount === 0
-                                ? 0
-                                : Math.round(
-                                    (group.reviewedCount / group.translatedCount) * 100,
-                                  );
-
-                            return (
+                        {openReviewQueueSections.length > 0 ? (
+                          <div className="mt-4 space-y-3">
+                            {openReviewQueueSections.map((group) => (
                               <div
                                 key={`review-queue-${group.sectionIndex}`}
                                 className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4"
@@ -3816,13 +3962,13 @@ export function LibraryWorkspace() {
                                     </div>
 
                                     <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
-                                      本章已译 {group.translatedCount} 段，其中仍有 {group.openCount} 段需要继续处理；当前复查完成度 {reviewedPercent}%。
+                                      本章已译 {group.translatedCount} 段，其中仍有 {group.openCount} 段需要继续处理；当前复查完成度 {group.reviewedPercent}%。
                                     </p>
 
                                     <div className="mt-3 h-2 overflow-hidden rounded-full bg-stone-200">
                                       <div
                                         className="h-full rounded-full bg-sky-500 transition-[width]"
-                                        style={{ width: `${reviewedPercent}%` }}
+                                        style={{ width: `${group.reviewedPercent}%` }}
                                       />
                                     </div>
 
@@ -3918,21 +4064,13 @@ export function LibraryWorkspace() {
                                   </div>
                                 </div>
                               </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ) : reviewStats.translatedCount > 0 ? (
-                      <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] p-4">
-                        <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
-                          复查队列
-                        </p>
-                        <p className="mt-2 text-sm font-semibold text-[color:var(--foreground)]">
-                          当前没有待复查或待修订的章节任务。
-                        </p>
-                        <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
-                          已译内容要么已经全部复核完成，要么还没有形成需要人工复查的稳定译文。当前共 {reviewQueueSummary.eligibleSectionCount} 个已译章节，其中 {reviewQueueSummary.completedSectionCount} 个已经清完。
-                        </p>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4 text-sm leading-6 text-[color:var(--muted)]">
+                            当前没有待复查或待修订的章节任务；所有已译章节都已经清完。你可以从上面的章节卡片重新进入任意章节抽检。
+                          </div>
+                        )}
                       </div>
                     ) : null}
 
@@ -4834,6 +4972,126 @@ function LibraryParagraphReviewActions({
         清除标记
       </button>
     </div>
+  );
+}
+
+type ReviewCoverageSectionCardProps = {
+  bookId: string;
+  group: ReviewQueueSectionGroup;
+};
+
+function ReviewCoverageSectionCard({
+  bookId,
+  group,
+}: ReviewCoverageSectionCardProps) {
+  const statusLabel = getReviewQueueSectionStatusLabel(group.status);
+  const statusClassName = getReviewQueueSectionStatusClassName(group.status);
+  const progressClassName = getReviewQueueSectionProgressClassName(group.status);
+  const primaryHref =
+    group.firstNeedsRevisionParagraphIndex !== null
+      ? buildReaderHref(bookId, {
+          filter: "needs-revision",
+          paragraph: group.firstNeedsRevisionParagraphIndex + 1,
+          scope: "section",
+        })
+      : group.firstUnreviewedParagraphIndex !== null
+        ? buildReaderHref(bookId, {
+            filter: "unreviewed-translated",
+            paragraph: group.firstUnreviewedParagraphIndex + 1,
+            scope: "section",
+          })
+        : buildReaderHref(bookId, {
+            paragraph: group.range.startParagraphIndex + 1,
+            scope: "section",
+          });
+  const primaryLabel =
+    group.firstNeedsRevisionParagraphIndex !== null
+      ? "处理待修订"
+      : group.firstUnreviewedParagraphIndex !== null
+        ? "处理待复查"
+        : "查看章节";
+
+  return (
+    <article
+      className={cn(
+        "rounded-[18px] border p-4",
+        group.status === "needs-revision"
+          ? "border-rose-200 bg-rose-50/60"
+          : group.status === "unreviewed"
+            ? "border-violet-200 bg-violet-50/55"
+            : "border-sky-200 bg-sky-50/55",
+      )}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+            Section {group.sectionIndex + 1}
+          </p>
+          <p className="mt-1 truncate text-sm font-semibold text-[color:var(--foreground)]">
+            {group.title}
+          </p>
+        </div>
+        <span
+          className={cn(
+            "rounded-full px-3 py-1 text-[11px] font-semibold",
+            statusClassName,
+          )}
+        >
+          {statusLabel}
+        </span>
+      </div>
+
+      <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+        第 {group.range.startParagraphIndex + 1} 段 - 第 {group.range.endParagraphIndex + 1} 段
+      </p>
+
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/90">
+        <div
+          className={cn("h-full rounded-full transition-[width]", progressClassName)}
+          style={{ width: `${group.reviewedPercent}%` }}
+        />
+      </div>
+
+      <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+        已复核 {group.reviewedCount}/{group.translatedCount} 段，完成度 {group.reviewedPercent}%。
+      </p>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        {group.needsRevisionCount > 0 ? (
+          <span className="rounded-full bg-rose-100 px-3 py-1 text-[11px] font-semibold text-rose-700">
+            待修订 {group.needsRevisionCount}
+          </span>
+        ) : null}
+        {group.unreviewedCount > 0 ? (
+          <span className="rounded-full bg-violet-100 px-3 py-1 text-[11px] font-semibold text-violet-800">
+            待复查 {group.unreviewedCount}
+          </span>
+        ) : null}
+        {group.reviewedCount > 0 ? (
+          <span className="rounded-full bg-sky-100 px-3 py-1 text-[11px] font-semibold text-sky-800">
+            已复核 {group.reviewedCount}
+          </span>
+        ) : null}
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Link
+          href={primaryHref}
+          className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+        >
+          {primaryLabel}
+        </Link>
+        <Link
+          href={buildReaderHref(bookId, {
+            paragraph: group.range.startParagraphIndex + 1,
+            scope: "section",
+          })}
+          className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+        >
+          整章阅读
+        </Link>
+      </div>
+    </article>
   );
 }
 
