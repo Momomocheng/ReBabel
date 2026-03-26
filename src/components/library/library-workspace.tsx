@@ -29,6 +29,7 @@ import {
 import { useShallow } from "zustand/react/shallow";
 import {
   clearBookTranslations,
+  getBookReviewStats,
   getBookTranslationStats,
   updateBookParagraph,
   updateBookParagraphReviewStatus,
@@ -847,6 +848,18 @@ export function LibraryWorkspace() {
             runningCount: 0,
             pendingCount: 0,
             progressPercent: 0,
+          },
+    [selectedBook],
+  );
+  const reviewStats = useMemo(
+    () =>
+      selectedBook
+        ? getBookReviewStats(selectedBook)
+        : {
+            needsRevisionCount: 0,
+            reviewedCount: 0,
+            translatedCount: 0,
+            unreviewedCount: 0,
           },
     [selectedBook],
   );
@@ -2692,6 +2705,7 @@ export function LibraryWorkspace() {
               {books.map((book) => {
                 const isSelected = selectedBook?.id === book.id;
                 const bookTranslationStats = getBookTranslationStats(book);
+                const bookReviewStats = getBookReviewStats(book);
 
                 return (
                   <div
@@ -2715,6 +2729,17 @@ export function LibraryWorkspace() {
                           {bookTranslationStats.translatedCount}/
                           {bookTranslationStats.totalCount}
                         </p>
+                        <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-semibold">
+                          <span className="rounded-full bg-violet-100 px-3 py-1 text-violet-800">
+                            待复查 {bookReviewStats.unreviewedCount}
+                          </span>
+                          <span className="rounded-full bg-rose-100 px-3 py-1 text-rose-700">
+                            待修订 {bookReviewStats.needsRevisionCount}
+                          </span>
+                          <span className="rounded-full bg-sky-100 px-3 py-1 text-sky-800">
+                            已复核 {bookReviewStats.reviewedCount}
+                          </span>
+                        </div>
                         <p className="mt-1 text-xs text-[color:var(--muted)]">
                           更新于 {formatRelativeDate(book.updatedAt)}
                         </p>
@@ -2771,17 +2796,36 @@ export function LibraryWorkspace() {
                       {translationStats.totalCount} 段，失败 {translationStats.failedCount} 段，
                       待处理 {translationStats.pendingCount} 段。
                     </p>
+                    <p className="mt-2 text-sm leading-6 text-[color:var(--muted)]">
+                      待复查 {reviewStats.unreviewedCount} 段，待修订 {reviewStats.needsRevisionCount} 段，
+                      已复核 {reviewStats.reviewedCount} 段。
+                    </p>
                     <p className="mt-2 text-xs uppercase tracking-[0.22em] text-[color:var(--muted)]">
                       {selectedBook.originalFileName}
                     </p>
                   </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-3">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
                   <MetricCard
                     label="译文完成"
                     value={String(translationStats.translatedCount)}
                     hint="done"
+                  />
+                  <MetricCard
+                    label="待复查"
+                    value={String(reviewStats.unreviewedCount)}
+                    hint="translated"
+                  />
+                  <MetricCard
+                    label="待修订"
+                    value={String(reviewStats.needsRevisionCount)}
+                    hint="needs revision"
+                  />
+                  <MetricCard
+                    label="已复核"
+                    value={String(reviewStats.reviewedCount)}
+                    hint="reviewed"
                   />
                   <MetricCard
                     label="失败段落"

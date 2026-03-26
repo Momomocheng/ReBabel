@@ -377,3 +377,24 @@ export function getBookTranslationStats(book: BookRecord) {
         : Math.round((translatedCount / book.paragraphs.length) * 100),
   };
 }
+
+export function getBookReviewStats(book: BookRecord) {
+  const translatedParagraphs = book.paragraphs.filter(
+    (paragraph) => paragraph.translationStatus === "done",
+  );
+  const reviewedCount = translatedParagraphs.filter(
+    (paragraph) => paragraph.reviewStatus === "reviewed",
+  ).length;
+  const needsRevisionCount = translatedParagraphs.filter(
+    (paragraph) => paragraph.reviewStatus === "needs-revision",
+  ).length;
+  const unreviewedCount =
+    translatedParagraphs.length - reviewedCount - needsRevisionCount;
+
+  return {
+    reviewedCount,
+    needsRevisionCount,
+    translatedCount: translatedParagraphs.length,
+    unreviewedCount,
+  };
+}

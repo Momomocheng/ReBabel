@@ -1,8 +1,12 @@
 import { z, ZodError } from "zod";
 import type { BookTextExportScope } from "@/lib/books/export-options";
-import { getBookTranslationStats } from "@/lib/books/book-record";
-import { normalizeBookRecord } from "@/lib/books/book-record";
+import {
+  getBookReviewStats,
+  getBookTranslationStats,
+  normalizeBookRecord,
+} from "@/lib/books/book-record";
 import { buildBookStats, deriveTitleFromFileName } from "@/lib/books/parser";
+import { getTranslationReviewStatusLabel } from "@/lib/books/review-status";
 import {
   getSectionIndexForParagraph,
   getSectionParagraphRange,
@@ -134,6 +138,7 @@ function formatExportDate(iso: string) {
 
 function buildExportSummaryLines(book: BookRecord) {
   const translationStats = getBookTranslationStats(book);
+  const reviewStats = getBookReviewStats(book);
 
   return [
     `书名：${book.title}`,
@@ -141,6 +146,9 @@ function buildExportSummaryLines(book: BookRecord) {
     `导出时间：${formatExportDate(new Date().toISOString())}`,
     `总段落：${book.stats.paragraphCount}`,
     `已翻译：${translationStats.translatedCount}`,
+    `待复查译文：${reviewStats.unreviewedCount}`,
+    `待修订：${reviewStats.needsRevisionCount}`,
+    `已复核：${reviewStats.reviewedCount}`,
     `失败段落：${translationStats.failedCount}`,
     `待处理：${translationStats.pendingCount}`,
     `书签数：${book.bookmarks.length}`,
@@ -200,6 +208,17 @@ function getTranslationStatusLabel(status: TranslationStatus) {
       return "失败";
     default:
       return "待翻译";
+  }
+}
+
+function getTranslationReviewStatusSlug(status: TranslationReviewStatus) {
+  switch (status) {
+    case "reviewed":
+      return "reviewed";
+    case "needs-revision":
+      return "needs-revision";
+    default:
+      return "unreviewed";
   }
 }
 
@@ -433,6 +452,7 @@ export function buildBookMarkdownExport(
     stats: snapshot.stats,
   };
   const translationStats = getBookTranslationStats(scopedBook);
+  const reviewStats = getBookReviewStats(scopedBook);
 
   return [
     `# ${book.title}`,
@@ -442,6 +462,9 @@ export function buildBookMarkdownExport(
       `导出段落：${snapshot.paragraphs.length}`,
       `导出书签：${snapshot.bookmarks.length}`,
       `已翻译：${translationStats.translatedCount}`,
+      `待复查译文：${reviewStats.unreviewedCount}`,
+      `待修订：${reviewStats.needsRevisionCount}`,
+      `已复核：${reviewStats.reviewedCount}`,
       ...buildExportSummaryLines(book),
     ].map((line) => `- ${line}`),
     "",
@@ -452,6 +475,8 @@ export function buildBookMarkdownExport(
       return [
         ...(sectionTitle ? [`## ${sectionTitle}`, ""] : []),
         `### Paragraph ${paragraph.index + 1}`,
+        "",
+        `- 复查：${getTranslationReviewStatusLabel(paragraph.reviewStatus)}`,
         "",
         "**EN**",
         "",
@@ -487,12 +512,16 @@ export function buildBookPlainTextExport(
     stats: snapshot.stats,
   };
   const translationStats = getBookTranslationStats(scopedBook);
+  const reviewStats = getBookReviewStats(scopedBook);
 
   return [
     `导出范围：${snapshot.scopeLabel}`,
     `导出段落：${snapshot.paragraphs.length}`,
     `导出书签：${snapshot.bookmarks.length}`,
     `已翻译：${translationStats.translatedCount}`,
+    `待复查译文：${reviewStats.unreviewedCount}`,
+    `待修订：${reviewStats.needsRevisionCount}`,
+    `已复核：${reviewStats.reviewedCount}`,
     "",
     ...buildExportSummaryLines(book),
     "",
@@ -503,6 +532,7 @@ export function buildBookPlainTextExport(
       return [
         ...(sectionTitle ? [`==== ${sectionTitle} ====`, ""] : []),
         `Paragraph ${paragraph.index + 1}`,
+        `复查：${getTranslationReviewStatusLabel(paragraph.reviewStatus)}`,
         `EN: ${paragraph.sourceText}`,
         `ZH: ${paragraph.translatedText || "这段还没有译文。"}`,
         ...(paragraph.translationError ? [`错误：${paragraph.translationError}`] : []),
@@ -530,11 +560,15 @@ export function buildBookHtmlExport(
     stats: snapshot.stats,
   };
   const translationStats = getBookTranslationStats(scopedBook);
+  const reviewStats = getBookReviewStats(scopedBook);
   const summaryItems = [
     `导出范围：${snapshot.scopeLabel}`,
     `导出段落：${snapshot.paragraphs.length}`,
     `导出书签：${snapshot.bookmarks.length}`,
     `已翻译：${translationStats.translatedCount}`,
+    `待复查译文：${reviewStats.unreviewedCount}`,
+    `待修订：${reviewStats.needsRevisionCount}`,
+    `已复核：${reviewStats.reviewedCount}`,
     ...buildExportSummaryLines(book),
   ];
   const paragraphHtml = snapshot.paragraphs
@@ -554,9 +588,11 @@ export function buildBookHtmlExport(
           : "",
         `<div class="paragraph-meta"><span class="paragraph-index">Paragraph ${
           paragraph.index + 1
-        }</span><span class="status-pill status-${paragraph.translationStatus}">${getTranslationStatusLabel(
+        }</span><span class="pill-group"><span class="status-pill status-${paragraph.translationStatus}">${getTranslationStatusLabel(
           paragraph.translationStatus,
-        )}</span></div>`,
+        )}</span><span class="status-pill review-pill review-${getTranslationReviewStatusSlug(
+          paragraph.reviewStatus,
+        )}">${getTranslationReviewStatusLabel(paragraph.reviewStatus)}</span></span></div>`,
         '<div class="paragraph-grid">',
         `<section class="panel panel-source"><h2>English</h2><p>${escapeHtml(
           paragraph.sourceText,
@@ -722,6 +758,12 @@ export function buildBookHtmlExport(
         align-items: center;
         margin-bottom: 16px;
       }
+      .pill-group {
+        display: inline-flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+      }
       .paragraph-index {
         font: 600 12px/1.4 system-ui, sans-serif;
         letter-spacing: 0.24em;
@@ -737,6 +779,9 @@ export function buildBookHtmlExport(
       .status-error { background: #fbe1de; color: #a5372c; }
       .status-pending { background: #ece6df; color: #62554a; }
       .status-translating { background: #f5e6c9; color: #8a5f16; }
+      .review-unreviewed { background: #efe7ff; color: #5f3ea8; }
+      .review-reviewed { background: #dcefff; color: #165d8a; }
+      .review-needs-revision { background: #ffe0e7; color: #a23450; }
       .paragraph-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -838,6 +883,15 @@ export function buildBookHtmlExport(
           }</strong></article>
           <article class="meta-card"><span>已翻译</span><strong>${
             translationStats.translatedCount
+          }</strong></article>
+          <article class="meta-card"><span>待复查</span><strong>${
+            reviewStats.unreviewedCount
+          }</strong></article>
+          <article class="meta-card"><span>待修订</span><strong>${
+            reviewStats.needsRevisionCount
+          }</strong></article>
+          <article class="meta-card"><span>已复核</span><strong>${
+            reviewStats.reviewedCount
           }</strong></article>
         </div>
         <ul class="summary-list">
