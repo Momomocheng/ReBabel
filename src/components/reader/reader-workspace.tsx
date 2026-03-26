@@ -23,6 +23,7 @@ import {
   Link2,
   PanelsLeftRight,
   Search,
+  Undo2,
   Upload,
   X,
 } from "lucide-react";
@@ -31,6 +32,7 @@ import {
   getBookTranslationStats,
   mergeBookReviewChecklist,
   mergeBookBookmarks,
+  restoreBookParagraphReviewStatuses,
   toggleBookBookmark,
   updateBookBookmarkNote,
   updateBookParagraphReviewStatus,
@@ -93,6 +95,18 @@ type ReviewChecklistImportPreview = {
   targetBookId: string;
   targetBookUpdatedAt: string;
   totalItemCount: number;
+};
+
+type ReaderBulkReviewUndoState = {
+  actionLabel: string;
+  paragraphCount: number;
+  previousStatuses: Array<{
+    paragraphIndex: number;
+    reviewStatus: TranslationReviewStatus;
+  }>;
+  targetBookId: string;
+  targetBookUpdatedAt: string;
+  viewLabel: string;
 };
 
 type SearchNavigationDirection = "next" | "previous";
@@ -554,6 +568,8 @@ export function ReaderWorkspace() {
     useState<ReaderParagraphFilter>(paragraphFilterFromUrl);
   const [paragraphScope, setParagraphScope] =
     useState<ReaderParagraphScope>(paragraphScopeFromUrl);
+  const [readerBulkReviewUndoState, setReaderBulkReviewUndoState] =
+    useState<ReaderBulkReviewUndoState | null>(null);
   const [reviewChecklistImportPreview, setReviewChecklistImportPreview] =
     useState<ReviewChecklistImportPreview | null>(null);
   const [searchInput, setSearchInput] = useState(searchQueryFromUrl);
@@ -1015,6 +1031,9 @@ export function ReaderWorkspace() {
       reviewChecklistImportPreview.mergeResult.skippedMissingParagraphCount
     : 0;
   const currentBulkReviewViewLabel = `${currentReviewChecklistScopeLabel} · ${currentReviewChecklistFilterLabel}`;
+  const canUndoReaderBulkReview =
+    readerBulkReviewUndoState?.targetBookId === selectedBook?.id &&
+    readerBulkReviewUndoState?.targetBookUpdatedAt === selectedBook?.updatedAt;
   const filteredNavigationLabel =
     paragraphFilter === "all"
       ? paragraphScope === "section"
@@ -1168,6 +1187,16 @@ export function ReaderWorkspace() {
 
     return () => window.clearTimeout(timer);
   }, [notice]);
+
+  useEffect(() => {
+    setReaderBulkReviewUndoState((current) =>
+      current &&
+      (current.targetBookId !== selectedBook?.id ||
+        current.targetBookUpdatedAt !== selectedBook?.updatedAt)
+        ? null
+        : current,
+    );
+  }, [selectedBook?.id, selectedBook?.updatedAt]);
 
   useEffect(() => {
     setReviewChecklistImportPreview((current) =>
@@ -1781,13 +1810,18 @@ export function ReaderWorkspace() {
       return;
     }
 
+    const previousStatuses = filteredTranslatedParagraphs
+      .filter((paragraph) => paragraph.reviewStatus !== reviewStatus)
+      .map((paragraph) => ({
+        paragraphIndex: paragraph.index,
+        reviewStatus: paragraph.reviewStatus,
+      }));
     const nextBook = updateBookParagraphReviewStatuses(
       selectedBook,
       paragraphIndexes,
       reviewStatus,
     );
-
-    await persistReaderBook(
+    const isSaved = await persistReaderBook(
       nextBook,
       reviewStatus === "reviewed"
         ? `已将当前结果中的 ${paragraphIndexes.length} 段已译内容标记为已复核。`
@@ -1796,6 +1830,52 @@ export function ReaderWorkspace() {
           : `已将当前结果中的 ${paragraphIndexes.length} 段复查状态清回待复查。`,
       "批量更新当前结果的复查状态失败，请稍后重试。",
     );
+
+    if (isSaved) {
+      setReaderBulkReviewUndoState({
+        actionLabel:
+          reviewStatus === "reviewed"
+            ? "批量标记已复核"
+            : reviewStatus === "needs-revision"
+              ? "批量标记待修订"
+              : "批量清回待复查",
+        paragraphCount: paragraphIndexes.length,
+        previousStatuses,
+        targetBookId: nextBook.id,
+        targetBookUpdatedAt: nextBook.updatedAt,
+        viewLabel: currentBulkReviewViewLabel,
+      });
+    }
+  }
+
+  async function handleUndoBulkReviewAction() {
+    if (!selectedBook || !readerBulkReviewUndoState) {
+      return;
+    }
+
+    if (
+      readerBulkReviewUndoState.targetBookId !== selectedBook.id ||
+      readerBulkReviewUndoState.targetBookUpdatedAt !== selectedBook.updatedAt
+    ) {
+      setReaderBulkReviewUndoState(null);
+      setNotice("");
+      setError("当前书籍内容已经变化，上一批量复查操作已无法撤销。");
+      return;
+    }
+
+    const restoredBook = restoreBookParagraphReviewStatuses(
+      selectedBook,
+      readerBulkReviewUndoState.previousStatuses,
+    );
+    const isSaved = await persistReaderBook(
+      restoredBook,
+      `已撤销${readerBulkReviewUndoState.actionLabel}，恢复 ${readerBulkReviewUndoState.paragraphCount} 段的原复查状态。`,
+      "撤销上一批量复查操作失败，请稍后重试。",
+    );
+
+    if (isSaved) {
+      setReaderBulkReviewUndoState(null);
+    }
   }
 
   function downloadContentFile(
@@ -3280,6 +3360,30 @@ export function ReaderWorkspace() {
                         </button>
                       </div>
                     </div>
+                    {readerBulkReviewUndoState ? (
+                      <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] px-4 py-4">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold">
+                              上一步批量操作：{readerBulkReviewUndoState.actionLabel}
+                            </p>
+                            <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                              作用范围：{readerBulkReviewUndoState.viewLabel} · 共{" "}
+                              {readerBulkReviewUndoState.paragraphCount} 段。只要当前书籍内容没有继续变化，就可以撤销。
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void handleUndoBulkReviewAction()}
+                            disabled={!canUndoReaderBulkReview}
+                            className="inline-flex items-center justify-center gap-2 rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                          >
+                            <Undo2 className="h-4 w-4" />
+                            撤销上一步批量操作
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
                 {hasNarrowedReaderView ? (

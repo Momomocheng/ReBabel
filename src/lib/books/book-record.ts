@@ -255,6 +255,34 @@ export function updateBookParagraphReviewStatuses(
   };
 }
 
+export function restoreBookParagraphReviewStatuses(
+  book: BookRecord,
+  entries: Array<{
+    paragraphIndex: number;
+    reviewStatus: TranslationReviewStatus;
+  }>,
+) {
+  const reviewStatusByParagraphIndex = new Map(
+    entries.map((entry) => [entry.paragraphIndex, entry.reviewStatus]),
+  );
+
+  return {
+    ...book,
+    updatedAt: new Date().toISOString(),
+    paragraphs: book.paragraphs.map((paragraph) => {
+      const nextReviewStatus = reviewStatusByParagraphIndex.get(paragraph.index);
+
+      return nextReviewStatus !== undefined &&
+        paragraph.translationStatus === "done"
+        ? normalizeParagraph({
+            ...paragraph,
+            reviewStatus: nextReviewStatus,
+          })
+        : paragraph;
+    }),
+  };
+}
+
 export function clearBookTranslations(book: BookRecord) {
   return {
     ...book,
