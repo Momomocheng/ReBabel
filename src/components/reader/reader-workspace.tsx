@@ -34,6 +34,7 @@ import {
   toggleBookBookmark,
   updateBookBookmarkNote,
   updateBookParagraphReviewStatus,
+  updateBookParagraphReviewStatuses,
   updateBookReadingProgress,
 } from "@/lib/books/book-record";
 import {
@@ -958,6 +959,42 @@ export function ReaderWorkspace() {
       };
     });
   }, [bookmarksByParagraphIndex, filteredParagraphs, selectedBook]);
+  const filteredTranslatedParagraphs = useMemo(
+    () =>
+      filteredParagraphs.filter(
+        (paragraph) => paragraph.translationStatus === "done",
+      ),
+    [filteredParagraphs],
+  );
+  const filteredReviewStatusCounts = useMemo(
+    () => ({
+      needsRevisionCount: filteredTranslatedParagraphs.filter(
+        (paragraph) => paragraph.reviewStatus === "needs-revision",
+      ).length,
+      reviewedCount: filteredTranslatedParagraphs.filter(
+        (paragraph) => paragraph.reviewStatus === "reviewed",
+      ).length,
+      translatedCount: filteredTranslatedParagraphs.length,
+      unreviewedCount: filteredTranslatedParagraphs.filter(
+        (paragraph) => paragraph.reviewStatus === "unreviewed",
+      ).length,
+    }),
+    [filteredTranslatedParagraphs],
+  );
+  const filteredBulkReviewActionCounts = useMemo(
+    () => ({
+      "needs-revision": filteredTranslatedParagraphs.filter(
+        (paragraph) => paragraph.reviewStatus !== "needs-revision",
+      ).length,
+      reviewed: filteredTranslatedParagraphs.filter(
+        (paragraph) => paragraph.reviewStatus !== "reviewed",
+      ).length,
+      unreviewed: filteredTranslatedParagraphs.filter(
+        (paragraph) => paragraph.reviewStatus !== "unreviewed",
+      ).length,
+    }),
+    [filteredTranslatedParagraphs],
+  );
   const activeSearchResultIndex = useMemo(
     () => findSearchResultIndex(searchResults, activeParagraphIndex),
     [activeParagraphIndex, searchResults],
@@ -977,6 +1014,7 @@ export function ReaderWorkspace() {
       reviewChecklistImportPreview.mergeResult.skippedSourceMismatchCount +
       reviewChecklistImportPreview.mergeResult.skippedMissingParagraphCount
     : 0;
+  const currentBulkReviewViewLabel = `${currentReviewChecklistScopeLabel} · ${currentReviewChecklistFilterLabel}`;
   const filteredNavigationLabel =
     paragraphFilter === "all"
       ? paragraphScope === "section"
@@ -1706,6 +1744,57 @@ export function ReaderWorkspace() {
       nextBook,
       `已将第 ${paragraphIndex + 1} 段标记为${getReviewStatusNoticeLabel(reviewStatus)}。`,
       "保存复查标记失败，请稍后重试。",
+    );
+  }
+
+  async function handleBulkUpdateFilteredReviewStatus(
+    reviewStatus: TranslationReviewStatus,
+  ) {
+    if (!selectedBook) {
+      return;
+    }
+
+    const paragraphIndexes = filteredTranslatedParagraphs
+      .filter((paragraph) => paragraph.reviewStatus !== reviewStatus)
+      .map((paragraph) => paragraph.index);
+
+    if (paragraphIndexes.length === 0) {
+      return;
+    }
+
+    const shouldProceed =
+      reviewStatus === "reviewed"
+        ? window.confirm(
+            filteredReviewStatusCounts.needsRevisionCount > 0
+              ? `当前结果（${currentBulkReviewViewLabel}）里还有 ${filteredReviewStatusCounts.needsRevisionCount} 段标记为待修订。继续会把其中 ${paragraphIndexes.length} 段已译内容全部标记为已复核，是否继续？`
+              : `确认把当前结果（${currentBulkReviewViewLabel}）中的 ${paragraphIndexes.length} 段已译内容全部标记为已复核吗？`,
+          )
+        : reviewStatus === "needs-revision"
+          ? window.confirm(
+              `确认把当前结果（${currentBulkReviewViewLabel}）中的 ${paragraphIndexes.length} 段已译内容全部标记为待修订吗？`,
+            )
+          : window.confirm(
+              `确认把当前结果（${currentBulkReviewViewLabel}）中的 ${paragraphIndexes.length} 段复查标记清回待复查吗？`,
+            );
+
+    if (!shouldProceed) {
+      return;
+    }
+
+    const nextBook = updateBookParagraphReviewStatuses(
+      selectedBook,
+      paragraphIndexes,
+      reviewStatus,
+    );
+
+    await persistReaderBook(
+      nextBook,
+      reviewStatus === "reviewed"
+        ? `已将当前结果中的 ${paragraphIndexes.length} 段已译内容标记为已复核。`
+        : reviewStatus === "needs-revision"
+          ? `已将当前结果中的 ${paragraphIndexes.length} 段已译内容标记为待修订。`
+          : `已将当前结果中的 ${paragraphIndexes.length} 段复查状态清回待复查。`,
+      "批量更新当前结果的复查状态失败，请稍后重试。",
     );
   }
 
@@ -3136,6 +3225,60 @@ export function ReaderWorkspace() {
                           </div>
                         </div>
                       ) : null}
+                    </div>
+                  </div>
+                ) : null}
+                {filteredReviewStatusCounts.translatedCount > 0 ? (
+                  <div className="mt-3 rounded-[20px] border border-[color:var(--line)] bg-white/85 p-4">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold">当前结果批量复查</p>
+                        <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                          当前结果里共有 {filteredReviewStatusCounts.translatedCount} 段已译内容。
+                          待复查 {filteredReviewStatusCounts.unreviewedCount} 段，待修订{" "}
+                          {filteredReviewStatusCounts.needsRevisionCount} 段，已复核{" "}
+                          {filteredReviewStatusCounts.reviewedCount} 段。
+                        </p>
+                        <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                          所有批量操作只对当前结果生效；如果你现在看的是“全书范围 + 全部段落”，那就会影响整本书的已译段落。
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleBulkUpdateFilteredReviewStatus("reviewed")
+                          }
+                          disabled={filteredBulkReviewActionCounts.reviewed === 0}
+                          className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                        >
+                          全部标记已复核 ({filteredBulkReviewActionCounts.reviewed})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleBulkUpdateFilteredReviewStatus("needs-revision")
+                          }
+                          disabled={
+                            filteredBulkReviewActionCounts["needs-revision"] === 0
+                          }
+                          className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                        >
+                          全部标记待修订 (
+                          {filteredBulkReviewActionCounts["needs-revision"]})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleBulkUpdateFilteredReviewStatus("unreviewed")
+                          }
+                          disabled={filteredBulkReviewActionCounts.unreviewed === 0}
+                          className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                        >
+                          全部清回待复查 (
+                          {filteredBulkReviewActionCounts.unreviewed})
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ) : null}
