@@ -5,6 +5,7 @@ export type TranslationReviewReason = {
     | "copied-source"
     | "english-leak"
     | "english-phrases"
+    | "needs-revision"
     | "too-short"
     | "dialogue-mismatch"
     | "number-mismatch"
@@ -25,8 +26,9 @@ export type TranslationReviewCandidate = {
 
 export type TranslationReviewSample = {
   candidates: TranslationReviewCandidate[];
+  eligibleParagraphCount: number;
   highRiskCandidateCount: number;
-  reviewedParagraphCount: number;
+  skippedReviewedCount: number;
 };
 
 const LATIN_LETTER_PATTERN = /[A-Za-z]/g;
@@ -51,7 +53,12 @@ function buildCandidate(
   const sourceText = paragraph.sourceText.trim();
   const translatedText = paragraph.translatedText?.trim() ?? "";
 
-  if (!sourceText || !translatedText || paragraph.translationStatus !== "done") {
+  if (
+    !sourceText ||
+    !translatedText ||
+    paragraph.translationStatus !== "done" ||
+    paragraph.reviewStatus === "reviewed"
+  ) {
     return null;
   }
 
@@ -71,6 +78,14 @@ function buildCandidate(
 
   const normalizedSource = normalizeComparableText(sourceText);
   const normalizedTarget = normalizeComparableText(translatedText);
+
+  if (paragraph.reviewStatus === "needs-revision") {
+    reasons.push({
+      code: "needs-revision",
+      label: "人工标记待修订",
+      weight: 120,
+    });
+  }
 
   if (
     normalizedSource.length > 0 &&
@@ -257,7 +272,11 @@ export function buildTranslationReviewSample(
 
       return left.paragraphIndex - right.paragraphIndex;
     }),
+    eligibleParagraphCount: analyzedCandidates.length,
     highRiskCandidateCount: highRiskCandidates.length,
-    reviewedParagraphCount: analyzedCandidates.length,
+    skippedReviewedCount: book.paragraphs.filter(
+      (paragraph) =>
+        paragraph.translationStatus === "done" && paragraph.reviewStatus === "reviewed",
+    ).length,
   };
 }

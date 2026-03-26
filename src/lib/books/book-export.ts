@@ -9,7 +9,7 @@ import {
 } from "@/lib/books/sections";
 import type { BookRecord } from "@/lib/books/types";
 import type { BookBookmark, BookParagraph } from "@/lib/books/types";
-import type { TranslationStatus } from "@/lib/books/types";
+import type { TranslationReviewStatus, TranslationStatus } from "@/lib/books/types";
 
 const BOOK_EXPORT_FILE_TYPE = "rebabel-book";
 const BOOK_EXPORT_FILE_VERSION = 1;
@@ -31,10 +31,16 @@ const translationStatusSchema = z.enum([
   "done",
   "error",
 ] satisfies TranslationStatus[]);
+const translationReviewStatusSchema = z.enum([
+  "unreviewed",
+  "reviewed",
+  "needs-revision",
+] satisfies TranslationReviewStatus[]);
 
 const bookExportParagraphSchema = z.object({
   id: z.string().optional(),
   index: z.number().int().nonnegative().optional(),
+  reviewStatus: translationReviewStatusSchema.optional(),
   sourceText: z.string(),
   translatedText: z.string().nullable().optional(),
   translationError: z.string().nullable().optional(),
@@ -329,6 +335,7 @@ export function parseBookJsonImport(jsonText: string): BookRecord {
       return {
         id: paragraph.id?.trim() || createImportedBookEntityId("paragraph"),
         index,
+        reviewStatus: paragraph.reviewStatus ?? "unreviewed",
         sourceText: paragraph.sourceText,
         translatedText,
         translationError: paragraph.translationError ?? null,
@@ -391,6 +398,7 @@ export function buildBookJsonExport(book: BookRecord) {
       paragraphs: book.paragraphs.map((paragraph) => ({
         id: paragraph.id,
         index: paragraph.index,
+        reviewStatus: paragraph.reviewStatus,
         sourceText: paragraph.sourceText,
         translatedText: paragraph.translatedText,
         translationError: paragraph.translationError,

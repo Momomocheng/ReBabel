@@ -1,8 +1,13 @@
 export type TranslationStatus = "pending" | "translating" | "done" | "error";
+export type TranslationReviewStatus =
+  | "unreviewed"
+  | "reviewed"
+  | "needs-revision";
 
 export type BookParagraph = {
   id: string;
   index: number;
+  reviewStatus: TranslationReviewStatus;
   sourceText: string;
   translatedText: string | null;
   translationStatus: TranslationStatus;

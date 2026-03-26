@@ -32,8 +32,13 @@ import {
   mergeBookBookmarks,
   toggleBookBookmark,
   updateBookBookmarkNote,
+  updateBookParagraphReviewStatus,
   updateBookReadingProgress,
 } from "@/lib/books/book-record";
+import {
+  getTranslationReviewStatusClassName,
+  getTranslationReviewStatusLabel,
+} from "@/lib/books/review-status";
 import {
   buildReadingNotesExport,
   parseReadingNotesImport,
@@ -49,7 +54,7 @@ import {
   type GlossaryMatch,
 } from "@/lib/translation/glossary-highlighting";
 import type { GlossaryTerm } from "@/lib/translation/types";
-import type { BookRecord } from "@/lib/books/types";
+import type { BookRecord, TranslationReviewStatus } from "@/lib/books/types";
 import { cn } from "@/lib/utils";
 import { useTranslationPreferencesStore } from "@/stores/translation-preferences-store";
 
@@ -73,6 +78,9 @@ type ReaderParagraphFilter =
   | "bookmarked"
   | "failed"
   | "needs-review"
+  | "needs-revision"
+  | "reviewed"
+  | "unreviewed-translated"
   | "search-results";
 
 const READER_PARAGRAPH_FILTER_OPTIONS: Array<{
@@ -86,6 +94,18 @@ const READER_PARAGRAPH_FILTER_OPTIONS: Array<{
   {
     value: "needs-review",
     label: "待补译",
+  },
+  {
+    value: "unreviewed-translated",
+    label: "待复查译文",
+  },
+  {
+    value: "needs-revision",
+    label: "待修订",
+  },
+  {
+    value: "reviewed",
+    label: "已复核",
   },
   {
     value: "failed",
@@ -167,11 +187,13 @@ function matchesReaderParagraphFilter({
   filter,
   isSearchHit,
   isBookmarked,
+  reviewStatus,
   translationStatus,
 }: {
   filter: ReaderParagraphFilter;
   isSearchHit: boolean;
   isBookmarked: boolean;
+  reviewStatus: BookRecord["paragraphs"][number]["reviewStatus"];
   translationStatus: BookRecord["paragraphs"][number]["translationStatus"];
 }) {
   switch (filter) {
@@ -183,8 +205,25 @@ function matchesReaderParagraphFilter({
       return translationStatus === "error";
     case "needs-review":
       return translationStatus !== "done";
+    case "unreviewed-translated":
+      return translationStatus === "done" && reviewStatus === "unreviewed";
+    case "needs-revision":
+      return translationStatus === "done" && reviewStatus === "needs-revision";
+    case "reviewed":
+      return translationStatus === "done" && reviewStatus === "reviewed";
     default:
       return true;
+  }
+}
+
+function getReviewStatusNoticeLabel(status: TranslationReviewStatus) {
+  switch (status) {
+    case "reviewed":
+      return "已复核";
+    case "needs-revision":
+      return "待修订";
+    default:
+      return "待复查";
   }
 }
 
@@ -411,6 +450,24 @@ export function ReaderWorkspace() {
         selectedBook?.paragraphs.filter(
           (paragraph) => paragraph.translationStatus !== "done",
         ).length ?? 0,
+      "needs-revision":
+        selectedBook?.paragraphs.filter(
+          (paragraph) =>
+            paragraph.translationStatus === "done" &&
+            paragraph.reviewStatus === "needs-revision",
+        ).length ?? 0,
+      reviewed:
+        selectedBook?.paragraphs.filter(
+          (paragraph) =>
+            paragraph.translationStatus === "done" &&
+            paragraph.reviewStatus === "reviewed",
+        ).length ?? 0,
+      "unreviewed-translated":
+        selectedBook?.paragraphs.filter(
+          (paragraph) =>
+            paragraph.translationStatus === "done" &&
+            paragraph.reviewStatus === "unreviewed",
+        ).length ?? 0,
     }),
     [selectedBook],
   );
@@ -591,6 +648,7 @@ export function ReaderWorkspace() {
         filter: paragraphFilter,
         isSearchHit: searchHitParagraphIndexes.has(paragraph.index),
         isBookmarked: bookmarksByParagraphIndex.has(paragraph.index),
+        reviewStatus: paragraph.reviewStatus,
         translationStatus: paragraph.translationStatus,
       }),
     );
@@ -1219,6 +1277,27 @@ export function ReaderWorkspace() {
         ? `已保存第 ${activeParagraphIndex + 1} 段批注。`
         : `已保存第 ${activeParagraphIndex + 1} 段书签。`,
       "保存批注失败，请稍后重试。",
+    );
+  }
+
+  async function handleUpdateParagraphReviewStatus(
+    paragraphIndex: number,
+    reviewStatus: TranslationReviewStatus,
+  ) {
+    if (!selectedBook) {
+      return;
+    }
+
+    const nextBook = updateBookParagraphReviewStatus(
+      selectedBook,
+      paragraphIndex,
+      reviewStatus,
+    );
+
+    await persistReaderBook(
+      nextBook,
+      `已将第 ${paragraphIndex + 1} 段标记为${getReviewStatusNoticeLabel(reviewStatus)}。`,
+      "保存复查标记失败，请稍后重试。",
     );
   }
 
@@ -2205,8 +2284,20 @@ export function ReaderWorkspace() {
                                   ? "失败"
                                   : paragraph.translationStatus === "translating"
                                     ? "翻译中"
-                                    : "待翻译"}
+                                  : "待翻译"}
                             </span>
+                            {paragraph.translationStatus === "done" ? (
+                              <span
+                                className={cn(
+                                  "rounded-full px-3 py-1 text-xs font-semibold",
+                                  getTranslationReviewStatusClassName(
+                                    paragraph.reviewStatus,
+                                  ),
+                                )}
+                              >
+                                {getTranslationReviewStatusLabel(paragraph.reviewStatus)}
+                              </span>
+                            ) : null}
                           </div>
                         </div>
 
@@ -2248,6 +2339,50 @@ export function ReaderWorkspace() {
                           <p className="mt-3 text-sm text-red-600">
                             错误：{paragraph.translationError}
                           </p>
+                        ) : null}
+
+                        {paragraph.translationStatus === "done" ? (
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleUpdateParagraphReviewStatus(
+                                  paragraph.index,
+                                  "reviewed",
+                                )
+                              }
+                              disabled={paragraph.reviewStatus === "reviewed"}
+                              className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-3 py-2 text-xs font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                            >
+                              标记已复核
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleUpdateParagraphReviewStatus(
+                                  paragraph.index,
+                                  "needs-revision",
+                                )
+                              }
+                              disabled={paragraph.reviewStatus === "needs-revision"}
+                              className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-3 py-2 text-xs font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                            >
+                              标记待修订
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleUpdateParagraphReviewStatus(
+                                  paragraph.index,
+                                  "unreviewed",
+                                )
+                              }
+                              disabled={paragraph.reviewStatus === "unreviewed"}
+                              className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-3 py-2 text-xs font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                            >
+                              清除标记
+                            </button>
+                          </div>
                         ) : null}
                       </article>
                     );

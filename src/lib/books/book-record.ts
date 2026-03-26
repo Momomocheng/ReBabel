@@ -4,13 +4,19 @@ import type {
   BookReadingProgress,
   BookRecord,
   BookSection,
+  TranslationReviewStatus,
   TranslationStatus,
 } from "@/lib/books/types";
+import { normalizeTranslationReviewStatus } from "@/lib/books/review-status";
 import { normalizeBookSections } from "@/lib/books/sections";
 
 type BookBookmarkLike = Partial<BookBookmark> | null | undefined;
 
-type BookParagraphLike = Omit<BookParagraph, "translationStatus" | "translationError"> & {
+type BookParagraphLike = Omit<
+  BookParagraph,
+  "reviewStatus" | "translationStatus" | "translationError"
+> & {
+  reviewStatus?: TranslationReviewStatus;
   translationError?: string | null;
   translationStatus?: TranslationStatus;
 };
@@ -36,10 +42,14 @@ function normalizeParagraph(
   const translatedText = paragraph.translatedText?.trim() || null;
   const status = paragraph.translationStatus;
   const hasTranslation = Boolean(translatedText);
+  const reviewStatus = hasTranslation
+    ? normalizeTranslationReviewStatus(paragraph.reviewStatus)
+    : "unreviewed";
 
   if (status === "error") {
     return {
       ...paragraph,
+      reviewStatus: "unreviewed",
       translatedText,
       translationStatus: "error",
       translationError: paragraph.translationError ?? "翻译失败。",
@@ -49,6 +59,7 @@ function normalizeParagraph(
   if (status === "done" && hasTranslation) {
     return {
       ...paragraph,
+      reviewStatus,
       translatedText,
       translationStatus: "done",
       translationError: null,
@@ -58,6 +69,7 @@ function normalizeParagraph(
   if (hasTranslation) {
     return {
       ...paragraph,
+      reviewStatus,
       translatedText,
       translationStatus: "done",
       translationError: null,
@@ -67,6 +79,7 @@ function normalizeParagraph(
   if (status === "translating") {
     return {
       ...paragraph,
+      reviewStatus: "unreviewed",
       translatedText: null,
       translationStatus: options.resetTranslating ? "pending" : "translating",
       translationError: null,
@@ -75,10 +88,41 @@ function normalizeParagraph(
 
   return {
     ...paragraph,
+    reviewStatus: "unreviewed",
     translatedText: null,
     translationStatus: "pending",
     translationError: null,
   };
+}
+
+function normalizeParagraphText(text: string | null | undefined) {
+  return text?.trim() || null;
+}
+
+function shouldResetParagraphReviewStatus(
+  paragraph: BookParagraph,
+  patch: Partial<BookParagraph>,
+) {
+  if (patch.reviewStatus !== undefined) {
+    return false;
+  }
+
+  if (
+    patch.translationStatus !== undefined &&
+    patch.translationStatus !== "done"
+  ) {
+    return true;
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(patch, "translatedText") &&
+    normalizeParagraphText(patch.translatedText) !==
+      normalizeParagraphText(paragraph.translatedText)
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function normalizeReadingProgress(
@@ -167,10 +211,25 @@ export function updateBookParagraph(
         ? normalizeParagraph({
             ...paragraph,
             ...patch,
+            ...(shouldResetParagraphReviewStatus(paragraph, patch)
+              ? {
+                  reviewStatus: "unreviewed" as const,
+                }
+              : {}),
           })
         : paragraph,
     ),
   };
+}
+
+export function updateBookParagraphReviewStatus(
+  book: BookRecord,
+  index: number,
+  reviewStatus: TranslationReviewStatus,
+) {
+  return updateBookParagraph(book, index, {
+    reviewStatus,
+  });
 }
 
 export function clearBookTranslations(book: BookRecord) {
@@ -179,6 +238,7 @@ export function clearBookTranslations(book: BookRecord) {
     updatedAt: new Date().toISOString(),
     paragraphs: book.paragraphs.map((paragraph) => ({
       ...paragraph,
+      reviewStatus: "unreviewed" as const,
       translatedText: null,
       translationStatus: "pending" as const,
       translationError: null,

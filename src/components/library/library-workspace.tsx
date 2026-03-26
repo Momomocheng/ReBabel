@@ -31,7 +31,12 @@ import {
   clearBookTranslations,
   getBookTranslationStats,
   updateBookParagraph,
+  updateBookParagraphReviewStatus,
 } from "@/lib/books/book-record";
+import {
+  getTranslationReviewStatusClassName,
+  getTranslationReviewStatusLabel,
+} from "@/lib/books/review-status";
 import {
   buildBookExportFileName,
   buildBookHtmlExport,
@@ -103,7 +108,12 @@ import {
 } from "@/lib/translation/preferences";
 import { translateParagraph } from "@/lib/translation/openai-compatible";
 import type { GlossaryTerm } from "@/lib/translation/types";
-import type { BookRecord, BookSection, TranslationStatus } from "@/lib/books/types";
+import type {
+  BookRecord,
+  BookSection,
+  TranslationReviewStatus,
+  TranslationStatus,
+} from "@/lib/books/types";
 import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useTranslationPreferencesStore } from "@/stores/translation-preferences-store";
@@ -218,11 +228,29 @@ function getTargetedParagraphWorkflowHint(
     case "error":
       return "这段上次翻译失败了，最合理的处理是先单段重试，再决定是否继续整批跑剩余内容。";
     case "done":
-      return "这段已经有译文。若语气、术语或节奏不满意，可以直接单段润色。";
+      switch (paragraph.reviewStatus) {
+        case "reviewed":
+          return "这段已经人工复核过了。若你重新润色或想重新抽检，可以把它改回待复查或待修订。";
+        case "needs-revision":
+          return "这段已被人工标记为待修订。优先回头修正它，比继续往后批量翻更稳妥。";
+        default:
+          return "这段已经有译文，但还没人工复查。确认语气、术语和节奏后，可以直接标记为已复核。";
+      }
     case "translating":
       return "这段正在翻译中。等当前请求结束后，你可以继续处理相邻上下文或返回阅读器查看结果。";
     default:
       return "这段还没有译文。可以先单段补译，确认风格没问题后再继续批量翻译。";
+  }
+}
+
+function getReviewStatusNoticeLabel(status: TranslationReviewStatus) {
+  switch (status) {
+    case "reviewed":
+      return "已复核";
+    case "needs-revision":
+      return "待修订";
+    default:
+      return "待复查";
   }
 }
 
@@ -896,8 +924,9 @@ export function LibraryWorkspace() {
           })
         : {
             candidates: [],
+            eligibleParagraphCount: 0,
             highRiskCandidateCount: 0,
-            reviewedParagraphCount: 0,
+            skippedReviewedCount: 0,
           },
     [selectedBook],
   );
@@ -1722,6 +1751,36 @@ export function LibraryWorkspace() {
       setError("");
     } catch {
       setError("清空译文失败，请稍后重试。");
+    }
+  }
+
+  async function handleUpdateParagraphReviewStatus(
+    paragraphIndex: number,
+    reviewStatus: TranslationReviewStatus,
+  ) {
+    if (!selectedBook) {
+      return;
+    }
+
+    const paragraph = selectedBook.paragraphs[paragraphIndex] ?? null;
+
+    if (!paragraph || paragraph.translationStatus !== "done") {
+      return;
+    }
+
+    try {
+      const nextBook = updateBookParagraphReviewStatus(
+        selectedBook,
+        paragraphIndex,
+        reviewStatus,
+      );
+      await persistBook(nextBook);
+      setNotice(
+        `已将第 ${paragraphIndex + 1} 段标记为${getReviewStatusNoticeLabel(reviewStatus)}。`,
+      );
+      setError("");
+    } catch {
+      setError("保存复查标记失败，请稍后重试。");
     }
   }
 
@@ -3340,7 +3399,8 @@ export function LibraryWorkspace() {
                       </div>
                     ) : null}
 
-                    {translationReviewSample.reviewedParagraphCount > 0 ? (
+                    {translationReviewSample.eligibleParagraphCount > 0 ||
+                    translationReviewSample.skippedReviewedCount > 0 ? (
                       <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] p-4">
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                           <div>
@@ -3348,13 +3408,18 @@ export function LibraryWorkspace() {
                               抽样质检
                             </p>
                             <p className="mt-2 text-sm font-semibold text-[color:var(--foreground)]">
-                              已从 {translationReviewSample.reviewedParagraphCount} 段已完成译文里抽出{" "}
+                              已从 {translationReviewSample.eligibleParagraphCount} 段待人工复查的已译段落里抽出{" "}
                               {translationReviewSample.candidates.length} 段优先复查样本。
                             </p>
                             <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
                               其中有 {translationReviewSample.highRiskCandidateCount} 段被规则判定为高风险；
                               其余样本用于覆盖性抽查，避免只盯着失败段落而漏掉已经落地但质量可疑的译文。
                             </p>
+                            {translationReviewSample.skippedReviewedCount > 0 ? (
+                              <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                                另有 {translationReviewSample.skippedReviewedCount} 段已被标记为“已复核”，本轮抽样会自动跳过。
+                              </p>
+                            ) : null}
                           </div>
 
                           <Link
@@ -3370,102 +3435,130 @@ export function LibraryWorkspace() {
                           </Link>
                         </div>
 
-                        <div className="mt-4 space-y-3">
-                          {translationReviewSample.candidates.map((candidate) => {
-                            const candidateSectionIndex = getSectionIndexForParagraph(
-                              selectedBook.sections,
-                              candidate.paragraphIndex,
-                            );
-                            const candidateSectionTitle =
-                              selectedBook.sections[candidateSectionIndex]?.title ?? "全文";
+                        {translationReviewSample.candidates.length === 0 ? (
+                          <div className="mt-4 rounded-[18px] border border-dashed border-[color:var(--line)] bg-white/70 p-4 text-sm leading-6 text-[color:var(--muted)]">
+                            当前没有待处理的抽样候选。已完成译文要么都已人工复核，要么暂时没有需要优先抽查的风险信号。
+                          </div>
+                        ) : (
+                          <div className="mt-4 space-y-3">
+                            {translationReviewSample.candidates.map((candidate) => {
+                              const candidateParagraph =
+                                selectedBook.paragraphs[candidate.paragraphIndex] ?? null;
+                              const candidateSectionIndex = getSectionIndexForParagraph(
+                                selectedBook.sections,
+                                candidate.paragraphIndex,
+                              );
+                              const candidateSectionTitle =
+                                selectedBook.sections[candidateSectionIndex]?.title ?? "全文";
 
-                            return (
-                              <div
-                                key={`review-sample-${candidate.paragraphIndex}`}
-                                className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4"
-                              >
-                                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                  <div className="min-w-0">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <span
-                                        className={cn(
-                                          "rounded-full px-3 py-1 text-[11px] font-semibold",
-                                          candidate.sampleKind === "high-risk"
-                                            ? "bg-red-100 text-red-700"
-                                            : "bg-stone-200 text-stone-700",
-                                        )}
-                                      >
-                                        {candidate.sampleKind === "high-risk"
-                                          ? "高风险样本"
-                                          : "覆盖抽样"}
-                                      </span>
-                                      <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
-                                        第 {candidate.paragraphIndex + 1} 段
-                                      </span>
-                                      <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
-                                        {candidateSectionTitle}
-                                      </span>
-                                      {candidate.score > 0 ? (
-                                        <span className="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-semibold text-amber-800">
-                                          风险分 {candidate.score}
+                              return (
+                                <div
+                                  key={`review-sample-${candidate.paragraphIndex}`}
+                                  className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4"
+                                >
+                                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span
+                                          className={cn(
+                                            "rounded-full px-3 py-1 text-[11px] font-semibold",
+                                            candidate.sampleKind === "high-risk"
+                                              ? "bg-red-100 text-red-700"
+                                              : "bg-stone-200 text-stone-700",
+                                          )}
+                                        >
+                                          {candidate.sampleKind === "high-risk"
+                                            ? "高风险样本"
+                                            : "覆盖抽样"}
                                         </span>
+                                        <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
+                                          第 {candidate.paragraphIndex + 1} 段
+                                        </span>
+                                        <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
+                                          {candidateSectionTitle}
+                                        </span>
+                                        {candidateParagraph ? (
+                                          <span
+                                            className={cn(
+                                              "rounded-full px-3 py-1 text-[11px] font-semibold",
+                                              getTranslationReviewStatusClassName(
+                                                candidateParagraph.reviewStatus,
+                                              ),
+                                            )}
+                                          >
+                                            {getTranslationReviewStatusLabel(
+                                              candidateParagraph.reviewStatus,
+                                            )}
+                                          </span>
+                                        ) : null}
+                                        {candidate.score > 0 ? (
+                                          <span className="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-semibold text-amber-800">
+                                            风险分 {candidate.score}
+                                          </span>
+                                        ) : null}
+                                      </div>
+
+                                      <div className="mt-3 flex flex-wrap gap-2">
+                                        {candidate.reasons.map((reason) => (
+                                          <span
+                                            key={`${candidate.paragraphIndex}-${reason.code}`}
+                                            className="rounded-full bg-[color:var(--panel)] px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]"
+                                          >
+                                            {reason.label}
+                                          </span>
+                                        ))}
+                                      </div>
+
+                                      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                                        <div className="rounded-[16px] border border-[color:var(--line)] bg-[color:var(--panel)] p-3">
+                                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                                            English
+                                          </p>
+                                          <p className="mt-2 text-sm leading-6 text-[color:var(--foreground)]">
+                                            {buildTextSnippet(candidate.sourceText)}
+                                          </p>
+                                        </div>
+                                        <div className="rounded-[16px] border border-[color:var(--line)] bg-[color:var(--panel-strong)] p-3">
+                                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                                            Chinese
+                                          </p>
+                                          <p className="mt-2 text-sm leading-6 text-[color:var(--foreground)]">
+                                            {buildTextSnippet(candidate.translatedText)}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex flex-wrap gap-2">
+                                      <Link
+                                        href={buildLibraryHref(selectedBook.id, {
+                                          paragraph: candidate.paragraphIndex + 1,
+                                        })}
+                                        className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                                      >
+                                        定位本段
+                                      </Link>
+                                      <Link
+                                        href={`/reader?book=${encodeURIComponent(selectedBook.id)}&p=${
+                                          candidate.paragraphIndex + 1
+                                        }`}
+                                        className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                                      >
+                                        阅读器复查
+                                      </Link>
+                                      {candidateParagraph ? (
+                                        <LibraryParagraphReviewActions
+                                          paragraph={candidateParagraph}
+                                          onUpdate={handleUpdateParagraphReviewStatus}
+                                        />
                                       ) : null}
                                     </div>
-
-                                    <div className="mt-3 flex flex-wrap gap-2">
-                                      {candidate.reasons.map((reason) => (
-                                        <span
-                                          key={`${candidate.paragraphIndex}-${reason.code}`}
-                                          className="rounded-full bg-[color:var(--panel)] px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]"
-                                        >
-                                          {reason.label}
-                                        </span>
-                                      ))}
-                                    </div>
-
-                                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                                      <div className="rounded-[16px] border border-[color:var(--line)] bg-[color:var(--panel)] p-3">
-                                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
-                                          English
-                                        </p>
-                                        <p className="mt-2 text-sm leading-6 text-[color:var(--foreground)]">
-                                          {buildTextSnippet(candidate.sourceText)}
-                                        </p>
-                                      </div>
-                                      <div className="rounded-[16px] border border-[color:var(--line)] bg-[color:var(--panel-strong)] p-3">
-                                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
-                                          Chinese
-                                        </p>
-                                        <p className="mt-2 text-sm leading-6 text-[color:var(--foreground)]">
-                                          {buildTextSnippet(candidate.translatedText)}
-                                        </p>
-                                      </div>
-                                    </div>
-                                  </div>
-
-                                  <div className="flex flex-wrap gap-2">
-                                    <Link
-                                      href={buildLibraryHref(selectedBook.id, {
-                                        paragraph: candidate.paragraphIndex + 1,
-                                      })}
-                                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
-                                    >
-                                      定位本段
-                                    </Link>
-                                    <Link
-                                      href={`/reader?book=${encodeURIComponent(selectedBook.id)}&p=${
-                                        candidate.paragraphIndex + 1
-                                      }`}
-                                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
-                                    >
-                                      阅读器复查
-                                    </Link>
                                   </div>
                                 </div>
-                              </div>
-                            );
-                          })}
-                        </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     ) : translationStats.translatedCount > 0 ? (
                       <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] p-4">
@@ -3953,6 +4046,18 @@ export function LibraryWorkspace() {
                       >
                         {getStatusLabel(targetedParagraph.translationStatus)}
                       </span>
+                      {targetedParagraph.translationStatus === "done" ? (
+                        <span
+                          className={cn(
+                            "rounded-full px-3 py-1 text-xs font-semibold",
+                            getTranslationReviewStatusClassName(
+                              targetedParagraph.reviewStatus,
+                            ),
+                          )}
+                        >
+                          {getTranslationReviewStatusLabel(targetedParagraph.reviewStatus)}
+                        </span>
+                      ) : null}
                       <span className="rounded-full bg-[color:var(--accent-soft)] px-3 py-1 text-xs font-semibold text-[color:var(--accent-strong)]">
                         当前预览已带上前后上下文
                       </span>
@@ -4017,6 +4122,11 @@ export function LibraryWorkspace() {
                         <PanelsTopLeft className="h-4 w-4" />
                         回到阅读器
                       </Link>
+
+                      <LibraryParagraphReviewActions
+                        paragraph={targetedParagraph}
+                        onUpdate={handleUpdateParagraphReviewStatus}
+                      />
                     </div>
                   </div>
                 </div>
@@ -4053,6 +4163,18 @@ export function LibraryWorkspace() {
                         >
                           {getStatusLabel(paragraph.translationStatus)}
                         </span>
+                        {paragraph.translationStatus === "done" ? (
+                          <span
+                            className={cn(
+                              "rounded-full px-3 py-1 text-xs font-semibold",
+                              getTranslationReviewStatusClassName(
+                                paragraph.reviewStatus,
+                              ),
+                            )}
+                          >
+                            {getTranslationReviewStatusLabel(paragraph.reviewStatus)}
+                          </span>
+                        ) : null}
                         {paragraph.index === activeParagraphIndex && isTranslating ? (
                           <span className="rounded-full bg-[color:var(--accent-soft)] px-3 py-1 text-xs font-semibold text-[color:var(--accent-strong)]">
                             处理中
@@ -4101,6 +4223,11 @@ export function LibraryWorkspace() {
                       错误：{paragraph.translationError}
                     </p>
                   ) : null}
+
+                  <LibraryParagraphReviewActions
+                    paragraph={paragraph}
+                    onUpdate={handleUpdateParagraphReviewStatus}
+                  />
                 </article>
               ))}
             </div>
@@ -4117,6 +4244,49 @@ export function LibraryWorkspace() {
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+type LibraryParagraphReviewActionsProps = {
+  onUpdate: (paragraphIndex: number, reviewStatus: TranslationReviewStatus) => void;
+  paragraph: BookRecord["paragraphs"][number];
+};
+
+function LibraryParagraphReviewActions({
+  onUpdate,
+  paragraph,
+}: LibraryParagraphReviewActionsProps) {
+  if (paragraph.translationStatus !== "done") {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <button
+        type="button"
+        onClick={() => void onUpdate(paragraph.index, "reviewed")}
+        disabled={paragraph.reviewStatus === "reviewed"}
+        className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+      >
+        标记已复核
+      </button>
+      <button
+        type="button"
+        onClick={() => void onUpdate(paragraph.index, "needs-revision")}
+        disabled={paragraph.reviewStatus === "needs-revision"}
+        className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+      >
+        标记待修订
+      </button>
+      <button
+        type="button"
+        onClick={() => void onUpdate(paragraph.index, "unreviewed")}
+        disabled={paragraph.reviewStatus === "unreviewed"}
+        className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+      >
+        清除标记
+      </button>
     </div>
   );
 }

@@ -42,6 +42,7 @@ export function createBookParagraphs(paragraphTexts: string[]): BookParagraph[] 
     .map((sourceText, index) => ({
       id: createParagraphId(index),
       index,
+      reviewStatus: "unreviewed" as const,
       sourceText,
       translatedText: null,
       translationStatus: "pending" as const,
