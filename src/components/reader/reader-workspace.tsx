@@ -29,6 +29,7 @@ import {
 import { useShallow } from "zustand/react/shallow";
 import {
   getBookTranslationStats,
+  mergeBookReviewChecklist,
   mergeBookBookmarks,
   toggleBookBookmark,
   updateBookBookmarkNote,
@@ -47,6 +48,7 @@ import {
   buildReaderReviewChecklistFileName,
   buildReaderReviewChecklistJsonExport,
   buildReaderReviewChecklistTextExport,
+  parseReaderReviewChecklistImport,
   type ReaderReviewChecklistItem,
 } from "@/lib/books/review-checklist";
 import {
@@ -506,6 +508,7 @@ export function ReaderWorkspace() {
     syncUrl: boolean;
   } | null>(null);
   const readingNotesImportInputRef = useRef<HTMLInputElement | null>(null);
+  const reviewChecklistImportInputRef = useRef<HTMLInputElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const saveTimeoutRef = useRef<number | null>(null);
 
@@ -1712,6 +1715,79 @@ export function ReaderWorkspace() {
     );
   }
 
+  async function handleImportReviewChecklist(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file || !selectedBook) {
+      return;
+    }
+
+    try {
+      const importedChecklist = parseReaderReviewChecklistImport(await file.text());
+      const importedBook = importedChecklist.book;
+      const looksLikeDifferentBook =
+        importedBook &&
+        ((importedBook.id && importedBook.id !== selectedBook.id) ||
+          (importedBook.originalFileName &&
+            importedBook.originalFileName !== selectedBook.originalFileName));
+
+      if (
+        looksLikeDifferentBook &&
+        !window.confirm(
+          `导入文件看起来来自《${importedBook.title || importedBook.originalFileName || "另一本文档"}》。继续导入只会按段落编号和原文内容匹配到当前书，是否继续？`,
+        )
+      ) {
+        return;
+      }
+
+      const result = mergeBookReviewChecklist(selectedBook, importedChecklist.items);
+      const successSegments: string[] = [];
+      const skippedSegments: string[] = [];
+
+      if (result.updatedReviewCount > 0) {
+        successSegments.push(`更新 ${result.updatedReviewCount} 条复查状态`);
+      }
+
+      if (result.mergedBookmarkCount > 0) {
+        successSegments.push(`合并 ${result.mergedBookmarkCount} 条批注`);
+      }
+
+      if (result.skippedTranslationMismatchCount > 0) {
+        skippedSegments.push(`${result.skippedTranslationMismatchCount} 段译文已变化`);
+      }
+
+      if (result.skippedSourceMismatchCount > 0) {
+        skippedSegments.push(`${result.skippedSourceMismatchCount} 段原文不匹配`);
+      }
+
+      if (result.skippedMissingParagraphCount > 0) {
+        skippedSegments.push(`${result.skippedMissingParagraphCount} 段超出当前书范围`);
+      }
+
+      if (successSegments.length === 0) {
+        setNotice("");
+        setError(
+          skippedSegments.length > 0
+            ? `复查清单没有导入任何变更：${skippedSegments.join("，")}。`
+            : "复查清单没有带来任何变更。",
+        );
+        return;
+      }
+
+      await persistReaderBook(
+        result.book,
+        `已导入复查清单：${successSegments.join("，")}。${
+          skippedSegments.length > 0 ? ` 已跳过 ${skippedSegments.join("，")}。` : ""
+        }`,
+        "导入复查清单失败，请稍后重试。",
+      );
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "导入复查清单失败。");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
   async function handleImportReadingNotes(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
 
@@ -2713,9 +2789,24 @@ export function ReaderWorkspace() {
                 </div>
                 <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <p className="text-xs leading-6 text-[color:var(--muted)]">
-                    可把当前筛选结果导出成复查清单，方便人工校对、外部流转或留档。
+                    可把当前筛选结果导出成复查清单，人工修改 JSON 后再导回当前书；导入时只会匹配原文一致的段落，并跳过已变化的译文。
                   </p>
                   <div className="flex flex-wrap gap-2">
+                    <input
+                      ref={reviewChecklistImportInputRef}
+                      type="file"
+                      accept=".json,application/json"
+                      className="sr-only"
+                      onChange={(event) => void handleImportReviewChecklist(event)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => reviewChecklistImportInputRef.current?.click()}
+                      className="inline-flex items-center justify-center gap-2 rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                    >
+                      <Upload className="h-4 w-4" />
+                      导入清单 JSON
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleExportFilteredReviewChecklist("txt")}

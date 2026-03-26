@@ -3,10 +3,46 @@ import type {
   TranslationReviewStatus,
   TranslationStatus,
 } from "@/lib/books/types";
-import { getTranslationReviewStatusLabel } from "@/lib/books/review-status";
+import { ZodError, z } from "zod";
+import {
+  getTranslationReviewStatusLabel,
+  normalizeTranslationReviewStatus,
+} from "@/lib/books/review-status";
 
 const REVIEW_CHECKLIST_FILE_TYPE = "rebabel-review-checklist";
 const REVIEW_CHECKLIST_FILE_VERSION = 1;
+
+const reviewChecklistItemSchema = z.object({
+  bookmarkNote: z.string().optional(),
+  paragraphIndex: z.number().int().nonnegative(),
+  reviewStatus: z.string().optional(),
+  sectionTitle: z.string().optional(),
+  sourceText: z.string().optional(),
+  translatedText: z.string().nullable().optional(),
+  translationStatus: z.string().optional(),
+});
+
+const reviewChecklistFileSchema = z.object({
+  book: z
+    .object({
+      id: z.string().optional(),
+      originalFileName: z.string().optional(),
+      title: z.string().optional(),
+    })
+    .optional(),
+  exportedAt: z.string().optional(),
+  items: z.array(reviewChecklistItemSchema),
+  type: z.literal(REVIEW_CHECKLIST_FILE_TYPE),
+  version: z.literal(REVIEW_CHECKLIST_FILE_VERSION),
+  view: z
+    .object({
+      filterLabel: z.string().optional(),
+      paragraphCount: z.number().optional(),
+      query: z.string().nullable().optional(),
+      scopeLabel: z.string().optional(),
+    })
+    .optional(),
+});
 
 export type ReaderReviewChecklistItem = {
   bookmarkNote: string;
@@ -16,6 +52,15 @@ export type ReaderReviewChecklistItem = {
   sourceText: string;
   translatedText: string | null;
   translationStatus: TranslationStatus;
+};
+
+type ImportedReaderReviewChecklist = {
+  book: {
+    id: string;
+    originalFileName: string;
+    title: string;
+  } | null;
+  items: ReaderReviewChecklistItem[];
 };
 
 function sanitizeFileSegment(value: string) {
@@ -46,6 +91,33 @@ function getTranslationStatusLabel(status: TranslationStatus) {
     default:
       return "待翻译";
   }
+}
+
+function normalizeTranslationStatus(
+  status: string | null | undefined,
+): TranslationStatus {
+  switch (status) {
+    case "done":
+    case "translating":
+    case "error":
+      return status;
+    default:
+      return "pending";
+  }
+}
+
+function normalizeReviewChecklistItem(
+  item: z.infer<typeof reviewChecklistItemSchema>,
+): ReaderReviewChecklistItem {
+  return {
+    bookmarkNote: item.bookmarkNote?.trim() ?? "",
+    paragraphIndex: item.paragraphIndex,
+    reviewStatus: normalizeTranslationReviewStatus(item.reviewStatus),
+    sectionTitle: item.sectionTitle?.trim() ?? "",
+    sourceText: item.sourceText?.trim() ?? "",
+    translatedText: item.translatedText?.trim() || null,
+    translationStatus: normalizeTranslationStatus(item.translationStatus),
+  };
 }
 
 export function buildReaderReviewChecklistFileName(
@@ -130,4 +202,42 @@ export function buildReaderReviewChecklistTextExport(options: {
   ]
     .join("\n")
     .trim();
+}
+
+export function parseReaderReviewChecklistImport(
+  jsonText: string,
+): ImportedReaderReviewChecklist {
+  try {
+    const parsed = reviewChecklistFileSchema.parse(JSON.parse(jsonText) as unknown);
+    const items = parsed.items.map(normalizeReviewChecklistItem);
+
+    if (items.length === 0) {
+      throw new Error("复查清单里没有任何段落。");
+    }
+
+    return {
+      book: parsed.book
+        ? {
+            id: parsed.book.id?.trim() ?? "",
+            originalFileName: parsed.book.originalFileName?.trim() ?? "",
+            title: parsed.book.title?.trim() ?? "",
+          }
+        : null,
+      items,
+    };
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error("复查清单文件不是有效的 JSON。");
+    }
+
+    if (error instanceof ZodError) {
+      throw new Error("复查清单格式不正确。请导入 ReBabel 导出的 JSON 清单。");
+    }
+
+    if (error instanceof Error) {
+      throw error;
+    }
+
+    throw new Error("读取复查清单失败。");
+  }
 }

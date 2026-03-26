@@ -7,6 +7,7 @@ import type {
   TranslationReviewStatus,
   TranslationStatus,
 } from "@/lib/books/types";
+import type { ReaderReviewChecklistItem } from "@/lib/books/review-checklist";
 import { normalizeTranslationReviewStatus } from "@/lib/books/review-status";
 import { normalizeBookSections } from "@/lib/books/sections";
 
@@ -372,6 +373,121 @@ export function mergeBookBookmarks(book: BookRecord, bookmarks: BookBookmark[]) 
       ...bookmarks,
     ],
   });
+}
+
+export function mergeBookReviewChecklist(
+  book: BookRecord,
+  items: ReaderReviewChecklistItem[],
+) {
+  const now = new Date().toISOString();
+  const nextParagraphs = [...book.paragraphs];
+  const nextBookmarks = [...book.bookmarks];
+  const paragraphArrayIndexByIndex = new Map(
+    nextParagraphs.map((paragraph, index) => [paragraph.index, index]),
+  );
+  const bookmarkArrayIndexByIndex = new Map(
+    nextBookmarks.map((bookmark, index) => [bookmark.paragraphIndex, index]),
+  );
+  const itemByParagraphIndex = new Map(
+    items.map((item) => [item.paragraphIndex, item]),
+  );
+
+  let matchedParagraphCount = 0;
+  let mergedBookmarkCount = 0;
+  let updatedReviewCount = 0;
+  let skippedMissingParagraphCount = 0;
+  let skippedSourceMismatchCount = 0;
+  let skippedTranslationMismatchCount = 0;
+
+  itemByParagraphIndex.forEach((item, paragraphIndex) => {
+    const paragraphArrayIndex = paragraphArrayIndexByIndex.get(paragraphIndex);
+
+    if (paragraphArrayIndex === undefined) {
+      skippedMissingParagraphCount += 1;
+      return;
+    }
+
+    const paragraph = nextParagraphs[paragraphArrayIndex]!;
+
+    if (
+      normalizeParagraphText(paragraph.sourceText) !==
+      normalizeParagraphText(item.sourceText)
+    ) {
+      skippedSourceMismatchCount += 1;
+      return;
+    }
+
+    matchedParagraphCount += 1;
+
+    const importedBookmarkNote = item.bookmarkNote.trim();
+
+    if (importedBookmarkNote) {
+      const bookmarkArrayIndex = bookmarkArrayIndexByIndex.get(paragraphIndex);
+
+      if (bookmarkArrayIndex === undefined) {
+        nextBookmarks.push({
+          id: createBookBookmarkId(),
+          createdAt: now,
+          note: importedBookmarkNote,
+          paragraphIndex,
+          updatedAt: now,
+        });
+        bookmarkArrayIndexByIndex.set(paragraphIndex, nextBookmarks.length - 1);
+        mergedBookmarkCount += 1;
+      } else if (nextBookmarks[bookmarkArrayIndex]!.note !== importedBookmarkNote) {
+        nextBookmarks[bookmarkArrayIndex] = {
+          ...nextBookmarks[bookmarkArrayIndex]!,
+          note: importedBookmarkNote,
+          updatedAt: now,
+        };
+        mergedBookmarkCount += 1;
+      }
+    }
+
+    if (
+      paragraph.translationStatus !== "done" ||
+      item.translationStatus !== "done"
+    ) {
+      return;
+    }
+
+    if (
+      normalizeParagraphText(paragraph.translatedText) !==
+      normalizeParagraphText(item.translatedText)
+    ) {
+      skippedTranslationMismatchCount += 1;
+      return;
+    }
+
+    if (paragraph.reviewStatus === item.reviewStatus) {
+      return;
+    }
+
+    nextParagraphs[paragraphArrayIndex] = normalizeParagraph({
+      ...paragraph,
+      reviewStatus: item.reviewStatus,
+    });
+    updatedReviewCount += 1;
+  });
+
+  const hasChanges = mergedBookmarkCount > 0 || updatedReviewCount > 0;
+
+  return {
+    book: hasChanges
+      ? normalizeBookRecord({
+          ...book,
+          updatedAt: now,
+          bookmarks: nextBookmarks,
+          paragraphs: nextParagraphs,
+        })
+      : book,
+    matchedParagraphCount,
+    mergedBookmarkCount,
+    skippedMissingParagraphCount,
+    skippedSourceMismatchCount,
+    skippedTranslationMismatchCount,
+    updatedReviewCount,
+  };
 }
 
 export function getBookTranslationStats(book: BookRecord) {
