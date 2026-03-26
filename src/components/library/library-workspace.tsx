@@ -88,6 +88,7 @@ import {
   normalizeTranslationBatchScope,
   normalizeTranslationContextSize,
   normalizeTranslationRequestDelayMs,
+  type TranslationBatchSession,
   type TranslationBatchScope,
 } from "@/lib/translation/preferences";
 import { translateParagraph } from "@/lib/translation/openai-compatible";
@@ -451,6 +452,34 @@ function getBatchActionLabel(
   }
 }
 
+function getBatchSessionStatusLabel(status: TranslationBatchSession["status"]) {
+  switch (status) {
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "中断失败";
+    case "running":
+      return "进行中";
+    default:
+      return "已暂停";
+  }
+}
+
+function getBatchSessionStatusClassName(
+  status: TranslationBatchSession["status"],
+) {
+  switch (status) {
+    case "completed":
+      return "bg-emerald-100 text-emerald-800";
+    case "failed":
+      return "bg-red-100 text-red-700";
+    case "running":
+      return "bg-amber-100 text-amber-800";
+    default:
+      return "bg-stone-200 text-stone-700";
+  }
+}
+
 async function waitForAbortableDelay(delayMs: number, signal: AbortSignal) {
   if (delayMs <= 0) {
     return;
@@ -497,11 +526,13 @@ export function LibraryWorkspace() {
   );
   const {
     batchScope,
+    clearLastBatchSession,
     contextSize,
     addGlossaryTerm,
     extraInstructions,
     glossaryTerms,
     isHydrated: preferencesHydrated,
+    lastBatchSession,
     preferredReadableExportFormat,
     replaceGlossaryTerms,
     resetBatchScope,
@@ -517,6 +548,7 @@ export function LibraryWorkspace() {
     setContextSize,
     setExtraInstructions,
     setPreferredReadableExportFormat,
+    setLastBatchSession,
     setRequestDelayMs,
     setTextExportScope,
     textExportScope,
@@ -524,11 +556,13 @@ export function LibraryWorkspace() {
   } = useTranslationPreferencesStore(
     useShallow((state) => ({
       batchScope: state.batchScope,
+      clearLastBatchSession: state.clearLastBatchSession,
       contextSize: state.contextSize,
       addGlossaryTerm: state.addGlossaryTerm,
       extraInstructions: state.extraInstructions,
       glossaryTerms: state.glossaryTerms,
       isHydrated: state.isHydrated,
+      lastBatchSession: state.lastBatchSession,
       preferredReadableExportFormat: state.preferredReadableExportFormat,
       replaceGlossaryTerms: state.replaceGlossaryTerms,
       resetBatchScope: state.resetBatchScope,
@@ -544,6 +578,7 @@ export function LibraryWorkspace() {
       setContextSize: state.setContextSize,
       setExtraInstructions: state.setExtraInstructions,
       setPreferredReadableExportFormat: state.setPreferredReadableExportFormat,
+      setLastBatchSession: state.setLastBatchSession,
       setRequestDelayMs: state.setRequestDelayMs,
       setTextExportScope: state.setTextExportScope,
       textExportScope: state.textExportScope,
@@ -675,6 +710,13 @@ export function LibraryWorkspace() {
           },
     [selectedBook],
   );
+  const selectedBookBatchSession = useMemo(
+    () =>
+      lastBatchSession && selectedBook && lastBatchSession.bookId === selectedBook.id
+        ? lastBatchSession
+        : null,
+    [lastBatchSession, selectedBook],
+  );
   const importDraftParagraphs = useMemo(
     () => (importDraft ? normalizeImportDraftParagraphs(importDraft.paragraphs) : []),
     [importDraft],
@@ -754,15 +796,57 @@ export function LibraryWorkspace() {
         : [],
     [normalizedBatchScope, selectedBook],
   );
+  const batchQueuePreviewParagraphs = useMemo(
+    () => batchQueuePreview.slice(0, 5),
+    [batchQueuePreview],
+  );
   const selectedBatchScopeOption = useMemo(
     () =>
       BATCH_SCOPE_OPTIONS.find((option) => option.value === normalizedBatchScope) ??
       BATCH_SCOPE_OPTIONS[0],
     [normalizedBatchScope],
   );
+  const selectedBookBatchSessionScopeOption = useMemo(
+    () =>
+      selectedBookBatchSession
+        ? BATCH_SCOPE_OPTIONS.find(
+            (option) => option.value === selectedBookBatchSession.batchScope,
+          ) ?? null
+        : null,
+    [selectedBookBatchSession],
+  );
   const batchActionLabel = useMemo(
     () => getBatchActionLabel(normalizedBatchScope, translationStats.translatedCount),
     [normalizedBatchScope, translationStats.translatedCount],
+  );
+  const resumableBatchQueue = useMemo(
+    () =>
+      selectedBook && selectedBookBatchSession
+        ? buildBatchTranslationQueue(selectedBook, selectedBookBatchSession.batchScope)
+        : [],
+    [selectedBook, selectedBookBatchSession],
+  );
+  const resumableBatchQueuePreviewParagraphs = useMemo(
+    () => resumableBatchQueue.slice(0, 5),
+    [resumableBatchQueue],
+  );
+  const selectedBookBatchSessionProgressPercent = useMemo(() => {
+    if (!selectedBookBatchSession || selectedBookBatchSession.queueTotal <= 0) {
+      return 0;
+    }
+
+    return Math.min(
+      Math.round(
+        (selectedBookBatchSession.processedCount / selectedBookBatchSession.queueTotal) *
+          100,
+      ),
+      100,
+    );
+  }, [selectedBookBatchSession]);
+  const canResumeBatchSession = Boolean(
+    selectedBookBatchSession &&
+      selectedBookBatchSession.status !== "completed" &&
+      resumableBatchQueue.length > 0,
   );
   const batchQueueStatusText = useMemo(() => {
     if (!selectedBook) {
@@ -875,6 +959,23 @@ export function LibraryWorkspace() {
 
     return () => window.clearTimeout(timer);
   }, [notice]);
+
+  useEffect(() => {
+    if (
+      !preferencesHydrated ||
+      isTranslating ||
+      !lastBatchSession ||
+      lastBatchSession.status !== "running"
+    ) {
+      return;
+    }
+
+    setLastBatchSession({
+      ...lastBatchSession,
+      status: "stopped",
+      updatedAt: new Date().toISOString(),
+    });
+  }, [isTranslating, lastBatchSession, preferencesHydrated, setLastBatchSession]);
 
   function replaceBookInState(nextBook: BookRecord) {
     setBooks((current) =>
@@ -1283,6 +1384,9 @@ export function LibraryWorkspace() {
       const nextBooks = await listBooks();
 
       setBooks(nextBooks);
+      if (lastBatchSession?.bookId === bookId) {
+        clearLastBatchSession();
+      }
       setSelectedBookId((current) =>
         current === bookId ? (nextBooks[0]?.id ?? "") : current,
       );
@@ -1300,6 +1404,9 @@ export function LibraryWorkspace() {
     try {
       const clearedBook = clearBookTranslations(selectedBook);
       await persistBook(clearedBook);
+      if (lastBatchSession?.bookId === selectedBook.id) {
+        clearLastBatchSession();
+      }
       setNotice("已清空这本书的译文和翻译状态。");
       setError("");
     } catch {
@@ -1381,7 +1488,10 @@ export function LibraryWorkspace() {
     }
   }
 
-  async function handleTranslateBook() {
+  async function handleTranslateBook(options?: {
+    resumeSession?: boolean;
+    scopeOverride?: TranslationBatchScope;
+  }) {
     if (!selectedBook) {
       setError("请先选择一本书。");
       return;
@@ -1392,11 +1502,24 @@ export function LibraryWorkspace() {
       return;
     }
 
-    const batchScopeSnapshot = normalizedBatchScope;
+    const batchScopeSnapshot = options?.scopeOverride ?? normalizedBatchScope;
     const requestDelayMsSnapshot = normalizedRequestDelayMs;
     const queue = buildBatchTranslationQueue(selectedBook, batchScopeSnapshot);
+    const currentBatchSession =
+      options?.resumeSession &&
+      selectedBookBatchSession &&
+      selectedBookBatchSession.batchScope === batchScopeSnapshot
+        ? selectedBookBatchSession
+        : null;
 
     if (queue.length === 0) {
+      if (currentBatchSession) {
+        setLastBatchSession({
+          ...currentBatchSession,
+          status: "completed",
+          updatedAt: new Date().toISOString(),
+        });
+      }
       setNotice(getEmptyBatchQueueNotice(batchScopeSnapshot));
       setError("");
       return;
@@ -1412,6 +1535,31 @@ export function LibraryWorkspace() {
     const glossaryTermsSnapshot = activeGlossaryTerms;
     const controller = new AbortController();
     translationAbortControllerRef.current = controller;
+    let batchSession: TranslationBatchSession;
+    const sessionTimestamp = new Date().toISOString();
+
+    if (currentBatchSession) {
+      batchSession = {
+        ...currentBatchSession,
+        status: "running",
+        updatedAt: sessionTimestamp,
+      };
+    } else {
+      batchSession = {
+        batchScope: batchScopeSnapshot,
+        bookId: selectedBook.id,
+        failedCount: 0,
+        lastProcessedParagraphIndex: null,
+        processedCount: 0,
+        queueTotal: queue.length,
+        startedAt: sessionTimestamp,
+        status: "running",
+        successCount: 0,
+        updatedAt: sessionTimestamp,
+      };
+    }
+
+    setLastBatchSession(batchSession);
 
     let workingBook = selectedBook;
     let successCount = 0;
@@ -1441,10 +1589,26 @@ export function LibraryWorkspace() {
           failedCount += 1;
         }
 
+        batchSession = {
+          ...batchSession,
+          failedCount: batchSession.failedCount + (result.success ? 0 : 1),
+          lastProcessedParagraphIndex: index,
+          processedCount: batchSession.processedCount + 1,
+          successCount: batchSession.successCount + (result.success ? 1 : 0),
+          updatedAt: new Date().toISOString(),
+        };
+        setLastBatchSession(batchSession);
+
         if (queueIndex < queue.length - 1 && requestDelayMsSnapshot > 0) {
           await waitForAbortableDelay(requestDelayMsSnapshot, controller.signal);
         }
       }
+
+      setLastBatchSession({
+        ...batchSession,
+        status: "completed",
+        updatedAt: new Date().toISOString(),
+      });
 
       setNotice(
         failedCount > 0
@@ -1453,8 +1617,18 @@ export function LibraryWorkspace() {
       );
     } catch (translationError) {
       if (isAbortError(translationError)) {
+        setLastBatchSession({
+          ...batchSession,
+          status: "stopped",
+          updatedAt: new Date().toISOString(),
+        });
         setNotice("翻译已停止。再次开始会从未完成或失败的段落继续。");
       } else {
+        setLastBatchSession({
+          ...batchSession,
+          status: "failed",
+          updatedAt: new Date().toISOString(),
+        });
         setError(getErrorMessage(translationError));
       }
     } finally {
@@ -1516,6 +1690,18 @@ export function LibraryWorkspace() {
 
   function handleStopTranslation() {
     translationAbortControllerRef.current?.abort();
+  }
+
+  function handleResumeLastBatchSession() {
+    if (!selectedBookBatchSession) {
+      return;
+    }
+
+    setBatchScope(selectedBookBatchSession.batchScope);
+    void handleTranslateBook({
+      resumeSession: true,
+      scopeOverride: selectedBookBatchSession.batchScope,
+    });
   }
 
   function downloadContentFile(
@@ -2252,8 +2438,127 @@ export function LibraryWorkspace() {
                         <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
                           当前请求间隔为 {normalizedRequestDelayMs} ms。
                         </p>
+                        {batchQueuePreviewParagraphs.length > 0 ? (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {batchQueuePreviewParagraphs.map((index) => (
+                              <span
+                                key={`${normalizedBatchScope}-${index}`}
+                                className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]"
+                              >
+                                第 {index + 1} 段
+                              </span>
+                            ))}
+                            {batchQueuePreview.length > batchQueuePreviewParagraphs.length ? (
+                              <span className="rounded-full bg-stone-200 px-3 py-1 text-[11px] font-semibold text-stone-700">
+                                还有 {batchQueuePreview.length - batchQueuePreviewParagraphs.length} 段
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
+
+                    {selectedBookBatchSession ? (
+                      <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] p-4">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                              上次批量任务
+                            </p>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <span
+                                className={cn(
+                                  "rounded-full px-3 py-1 text-[11px] font-semibold",
+                                  getBatchSessionStatusClassName(
+                                    selectedBookBatchSession.status,
+                                  ),
+                                )}
+                              >
+                                {getBatchSessionStatusLabel(selectedBookBatchSession.status)}
+                              </span>
+                              <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
+                                {selectedBookBatchSessionScopeOption?.label ?? "批量任务"}
+                              </span>
+                              <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
+                                已处理 {selectedBookBatchSession.processedCount}/
+                                {selectedBookBatchSession.queueTotal} 段
+                              </span>
+                            </div>
+                            <p className="mt-3 text-sm font-semibold text-[color:var(--foreground)]">
+                              成功 {selectedBookBatchSession.successCount} 段，失败{" "}
+                              {selectedBookBatchSession.failedCount} 段，当前还可继续处理{" "}
+                              {resumableBatchQueue.length} 段。
+                            </p>
+                            <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                              开始于 {formatRelativeDate(selectedBookBatchSession.startedAt)}，
+                              最近更新于 {formatRelativeDate(selectedBookBatchSession.updatedAt)}。
+                              {selectedBookBatchSession.lastProcessedParagraphIndex !== null
+                                ? ` 上次推进到第 ${
+                                    selectedBookBatchSession.lastProcessedParagraphIndex + 1
+                                  } 段。`
+                                : ""}
+                            </p>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={handleResumeLastBatchSession}
+                              disabled={
+                                !hasTranslationConfig ||
+                                isTranslating ||
+                                !canResumeBatchSession
+                              }
+                              className="inline-flex items-center justify-center gap-2 rounded-full bg-[color:var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[color:var(--accent-strong)] disabled:cursor-not-allowed disabled:bg-stone-300"
+                            >
+                              <WandSparkles className="h-4 w-4" />
+                              继续上次任务
+                            </button>
+                            <button
+                              type="button"
+                              onClick={clearLastBatchSession}
+                              disabled={isTranslating}
+                              className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                            >
+                              清除记录
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 h-3 overflow-hidden rounded-full bg-stone-200">
+                          <div
+                            className="h-full rounded-full bg-[color:var(--accent)] transition-[width]"
+                            style={{ width: `${selectedBookBatchSessionProgressPercent}%` }}
+                          />
+                        </div>
+
+                        {resumableBatchQueuePreviewParagraphs.length > 0 ? (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {resumableBatchQueuePreviewParagraphs.map((index) => (
+                              <span
+                                key={`${selectedBookBatchSession.bookId}-${index}`}
+                                className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]"
+                              >
+                                续跑第 {index + 1} 段
+                              </span>
+                            ))}
+                            {resumableBatchQueue.length >
+                            resumableBatchQueuePreviewParagraphs.length ? (
+                              <span className="rounded-full bg-stone-200 px-3 py-1 text-[11px] font-semibold text-stone-700">
+                                还有{" "}
+                                {resumableBatchQueue.length -
+                                  resumableBatchQueuePreviewParagraphs.length}{" "}
+                                段
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <p className="mt-3 text-xs leading-6 text-[color:var(--muted)]">
+                            当前已经没有可续跑段落了。你可以清除这条记录，或切换新的批量范围重新开始。
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="mt-4 rounded-[20px] border border-[color:var(--line)] bg-white/80 p-4">

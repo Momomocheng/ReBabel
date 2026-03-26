@@ -13,6 +13,29 @@ export const MAX_TRANSLATION_REQUEST_DELAY_MS = 5000;
 export type TranslationBatchScope =
   (typeof TRANSLATION_BATCH_SCOPE_VALUES)[number];
 
+export const TRANSLATION_BATCH_SESSION_STATUS_VALUES = [
+  "running",
+  "stopped",
+  "completed",
+  "failed",
+] as const;
+
+export type TranslationBatchSessionStatus =
+  (typeof TRANSLATION_BATCH_SESSION_STATUS_VALUES)[number];
+
+export type TranslationBatchSession = {
+  batchScope: TranslationBatchScope;
+  bookId: string;
+  failedCount: number;
+  lastProcessedParagraphIndex: number | null;
+  processedCount: number;
+  queueTotal: number;
+  startedAt: string;
+  status: TranslationBatchSessionStatus;
+  successCount: number;
+  updatedAt: string;
+};
+
 export function normalizeTranslationContextSize(value: number | null | undefined) {
   if (!Number.isFinite(value)) {
     return DEFAULT_TRANSLATION_CONTEXT_SIZE;

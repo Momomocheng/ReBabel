@@ -29,6 +29,11 @@ ReBabel 现在按纯前端静态站点方式设计，适合部署到 GitHub Page
 3. 在 `Build and deployment` 里把 `Source` 设为 `GitHub Actions`。
 4. 推送一次到 `main`，等待 `.github/workflows/deploy-pages.yml` 跑完。
 
+如果第一次跑工作流时看到 `Get Pages site failed` / `HttpError: Not Found`，说明这个仓库还没有启用 Pages 站点。处理方式有两种：
+
+- 最直接：按上面的步骤先去 `Settings -> Pages` 手动把 `Source` 设为 `GitHub Actions`，然后重新运行 workflow。
+- 自动启用：在仓库里新增一个 `PAGES_ENABLEMENT_TOKEN` secret，值为一个拥有该仓库管理权限的 PAT。工作流会在首次部署时尝试自动启用 Pages。
+
 ### Base Path Rules
 
 - 如果仓库名是普通项目仓库，例如 `ReBabel`，站点会自动部署到 `/<repo-name>`，也就是 `/ReBabel`。

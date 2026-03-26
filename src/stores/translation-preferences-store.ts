@@ -19,6 +19,7 @@ import {
   normalizeTranslationBatchScope,
   normalizeTranslationContextSize,
   normalizeTranslationRequestDelayMs,
+  type TranslationBatchSession,
   type TranslationBatchScope,
 } from "@/lib/translation/preferences";
 import type { GlossaryTerm } from "@/lib/translation/types";
@@ -27,10 +28,12 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 type TranslationPreferencesState = {
   batchScope: TranslationBatchScope;
+  clearLastBatchSession: () => void;
   contextSize: number;
   extraInstructions: string;
   glossaryTerms: GlossaryTerm[];
   isHydrated: boolean;
+  lastBatchSession: TranslationBatchSession | null;
   preferredReadableExportFormat: BookReadableExportFormat;
   requestDelayMs: number;
   resetPreferredReadableExportFormat: () => void;
@@ -50,6 +53,7 @@ type TranslationPreferencesState = {
   setContextSize: (contextSize: number) => void;
   setExtraInstructions: (extraInstructions: string) => void;
   setHydrated: (isHydrated: boolean) => void;
+  setLastBatchSession: (lastBatchSession: TranslationBatchSession | null) => void;
   setRequestDelayMs: (requestDelayMs: number) => void;
   setTextExportScope: (textExportScope: BookTextExportScope) => void;
   textExportScope: BookTextExportScope;
@@ -68,6 +72,7 @@ function getDefaultState(): Pick<
   | "extraInstructions"
   | "glossaryTerms"
   | "isHydrated"
+  | "lastBatchSession"
   | "preferredReadableExportFormat"
   | "requestDelayMs"
   | "textExportScope"
@@ -78,6 +83,7 @@ function getDefaultState(): Pick<
     extraInstructions: "",
     glossaryTerms: [],
     isHydrated: false,
+    lastBatchSession: null,
     preferredReadableExportFormat: DEFAULT_BOOK_READABLE_EXPORT_FORMAT,
     requestDelayMs: MIN_TRANSLATION_REQUEST_DELAY_MS,
     textExportScope: DEFAULT_BOOK_TEXT_EXPORT_SCOPE,
@@ -104,6 +110,10 @@ export const useTranslationPreferencesStore =
         resetBatchScope: () =>
           set(() => ({
             batchScope: DEFAULT_TRANSLATION_BATCH_SCOPE,
+          })),
+        clearLastBatchSession: () =>
+          set(() => ({
+            lastBatchSession: null,
           })),
         replaceGlossaryTerms: (glossaryTerms) =>
           set(() => ({
@@ -154,6 +164,10 @@ export const useTranslationPreferencesStore =
           set(() => ({
             isHydrated,
           })),
+        setLastBatchSession: (lastBatchSession) =>
+          set(() => ({
+            lastBatchSession,
+          })),
         setRequestDelayMs: (requestDelayMs) =>
           set(() => ({
             requestDelayMs: normalizeTranslationRequestDelayMs(requestDelayMs),
@@ -182,6 +196,7 @@ export const useTranslationPreferencesStore =
           contextSize: state.contextSize,
           extraInstructions: state.extraInstructions,
           glossaryTerms: state.glossaryTerms,
+          lastBatchSession: state.lastBatchSession,
           preferredReadableExportFormat: state.preferredReadableExportFormat,
           requestDelayMs: state.requestDelayMs,
           textExportScope: state.textExportScope,
