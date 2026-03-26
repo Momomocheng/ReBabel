@@ -44,6 +44,12 @@ import {
   parseReadingNotesImport,
 } from "@/lib/books/reading-notes";
 import {
+  buildReaderReviewChecklistFileName,
+  buildReaderReviewChecklistJsonExport,
+  buildReaderReviewChecklistTextExport,
+  type ReaderReviewChecklistItem,
+} from "@/lib/books/review-checklist";
+import {
   getSectionIndexForParagraph,
   getSectionParagraphRange,
 } from "@/lib/books/sections";
@@ -862,6 +868,34 @@ export function ReaderWorkspace() {
       ),
     [normalizedSearchQuery],
   );
+  const currentReviewChecklistFilterLabel = selectedParagraphFilterOption.label;
+  const currentReviewChecklistScopeLabel =
+    paragraphScope === "section"
+      ? `当前章节：${activeSection?.title ?? "全文"}`
+      : "全书范围";
+  const filteredReviewChecklistItems = useMemo(() => {
+    if (!selectedBook) {
+      return [] as ReaderReviewChecklistItem[];
+    }
+
+    return filteredParagraphs.map((paragraph) => {
+      const sectionIndex = getSectionIndexForParagraph(
+        selectedBook.sections,
+        paragraph.index,
+      );
+      const sectionTitle = selectedBook.sections[sectionIndex]?.title ?? "全文";
+
+      return {
+        bookmarkNote: bookmarksByParagraphIndex.get(paragraph.index)?.note ?? "",
+        paragraphIndex: paragraph.index,
+        reviewStatus: paragraph.reviewStatus,
+        sectionTitle,
+        sourceText: paragraph.sourceText,
+        translatedText: paragraph.translatedText,
+        translationStatus: paragraph.translationStatus,
+      };
+    });
+  }, [bookmarksByParagraphIndex, filteredParagraphs, selectedBook]);
   const activeSearchResultIndex = useMemo(
     () => findSearchResultIndex(searchResults, activeParagraphIndex),
     [activeParagraphIndex, searchResults],
@@ -1592,27 +1626,90 @@ export function ReaderWorkspace() {
     );
   }
 
-  function handleExportReadingNotes() {
-    if (!selectedBook) {
-      return;
-    }
-
-    const payload = buildReadingNotesExport(selectedBook);
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {
-      type: "application/json",
+  function downloadContentFile(
+    content: string,
+    fileName: string,
+    mimeType: string,
+  ) {
+    const blob = new Blob([content], {
+      type: mimeType,
     });
     const objectUrl = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
 
     anchor.href = objectUrl;
-    anchor.download = `${selectedBook.title
-      .replace(/[^\w\u4e00-\u9fff-]+/g, "-")
-      .slice(0, 48)}-notes.json`;
+    anchor.download = fileName;
     anchor.click();
 
     URL.revokeObjectURL(objectUrl);
+  }
+
+  function handleExportReadingNotes() {
+    if (!selectedBook) {
+      return;
+    }
+
+    downloadContentFile(
+      JSON.stringify(buildReadingNotesExport(selectedBook), null, 2),
+      `${selectedBook.title.replace(/[^\w\u4e00-\u9fff-]+/g, "-").slice(0, 48)}-notes.json`,
+      "application/json",
+    );
     setError("");
     setNotice(`已导出《${selectedBook.title}》的 ${selectedBook.bookmarks.length} 条阅读笔记。`);
+  }
+
+  function handleExportFilteredReviewChecklist(format: "json" | "txt") {
+    if (!selectedBook) {
+      return;
+    }
+
+    if (filteredReviewChecklistItems.length === 0) {
+      setNotice("");
+      setError("当前视图没有可导出的复查清单。");
+      return;
+    }
+
+    const fileName = buildReaderReviewChecklistFileName(selectedBook, {
+      extension: format,
+      filterLabel: currentReviewChecklistFilterLabel,
+      scopeLabel: currentReviewChecklistScopeLabel,
+    });
+    const query = searchInput.trim() || null;
+
+    if (format === "json") {
+      downloadContentFile(
+        JSON.stringify(
+          buildReaderReviewChecklistJsonExport({
+            book: selectedBook,
+            filterLabel: currentReviewChecklistFilterLabel,
+            items: filteredReviewChecklistItems,
+            query,
+            scopeLabel: currentReviewChecklistScopeLabel,
+          }),
+          null,
+          2,
+        ),
+        fileName,
+        "application/json",
+      );
+    } else {
+      downloadContentFile(
+        buildReaderReviewChecklistTextExport({
+          book: selectedBook,
+          filterLabel: currentReviewChecklistFilterLabel,
+          items: filteredReviewChecklistItems,
+          query,
+          scopeLabel: currentReviewChecklistScopeLabel,
+        }),
+        fileName,
+        "text/plain;charset=utf-8",
+      );
+    }
+
+    setError("");
+    setNotice(
+      `已导出 ${filteredReviewChecklistItems.length} 条「${currentReviewChecklistFilterLabel}」复查清单（${format.toUpperCase()}）。`,
+    );
   }
 
   async function handleImportReadingNotes(event: ChangeEvent<HTMLInputElement>) {
@@ -2612,6 +2709,31 @@ export function ReaderWorkspace() {
                         </button>
                       );
                     })}
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <p className="text-xs leading-6 text-[color:var(--muted)]">
+                    可把当前筛选结果导出成复查清单，方便人工校对、外部流转或留档。
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleExportFilteredReviewChecklist("txt")}
+                      disabled={filteredReviewChecklistItems.length === 0}
+                      className="inline-flex items-center justify-center gap-2 rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                    >
+                      <Download className="h-4 w-4" />
+                      导出当前清单 TXT
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleExportFilteredReviewChecklist("json")}
+                      disabled={filteredReviewChecklistItems.length === 0}
+                      className="inline-flex items-center justify-center gap-2 rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                    >
+                      <Download className="h-4 w-4" />
+                      导出当前清单 JSON
+                    </button>
                   </div>
                 </div>
                 {hasNarrowedReaderView ? (
