@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f4ede1;
+  --background-deep: #eadac2;
+  --foreground: #211913;
+  --muted: #6f6356;
+  --line: rgba(76, 51, 31, 0.14);
+  --panel: rgba(255, 250, 243, 0.8);
+  --panel-strong: #fffaf3;
+  --accent: #b95f28;
+  --accent-strong: #8d4117;
+  --accent-soft: rgba(185, 95, 40, 0.15);
+  --shadow: 0 24px 80px rgba(102, 67, 42, 0.14);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-manrope);
+  --font-serif: var(--font-newsreader);
+}
+
+* {
+  border-color: var(--line);
+}
+
+html {
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top left, rgba(255, 247, 233, 0.92), transparent 38%),
+    radial-gradient(circle at top right, rgba(234, 190, 138, 0.28), transparent 30%),
+    linear-gradient(180deg, var(--background) 0%, #f8f2e8 48%, var(--background-deep) 100%);
+}
+
+body {
+  min-height: 100%;
+  background: transparent;
+  color: var(--foreground);
+  font-family: var(--font-manrope), sans-serif;
+}
+
+a {
+  color: inherit;
+}
+
+::selection {
+  background: rgba(185, 95, 40, 0.22);
+}
+
+.grain-overlay {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)),
+    radial-gradient(rgba(54, 33, 17, 0.06) 0.7px, transparent 0.7px);
+  background-size: auto, 14px 14px;
+}
