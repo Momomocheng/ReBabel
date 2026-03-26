@@ -45,7 +45,7 @@ async function configureSettings(page: Page) {
   await page.getByLabel("服务商标签").fill(mockSettings.providerLabel);
   await page.getByLabel("模型名称").fill(mockSettings.model);
   await page.getByLabel("Base URL").fill(mockSettings.baseUrl);
-  await page.getByLabel("API Key").fill(mockSettings.apiKey);
+  await page.locator("#apiKey").fill(mockSettings.apiKey);
   await page.getByRole("button", { name: "保存到本地" }).click();
 
   await expect(page.getByText("配置已保存到当前浏览器。")).toBeVisible();
@@ -137,7 +137,7 @@ test("settings persist after reload", async ({ page }, testInfo) => {
   );
   await expect(page.getByLabel("模型名称")).toHaveValue(mockSettings.model);
   await expect(page.getByLabel("Base URL")).toHaveValue(mockSettings.baseUrl);
-  await expect(page.getByLabel("API Key")).toHaveValue(mockSettings.apiKey);
+  await expect(page.locator("#apiKey")).toHaveValue(mockSettings.apiKey);
 });
 
 test("desktop workflow covers import, translation, notes, review checklist, and backup restore", async ({
