@@ -1878,6 +1878,20 @@ export function ReaderWorkspace() {
     }
   }
 
+  function handleJumpToReviewChecklistPreviewParagraph(
+    paragraphIndex: number,
+    reasonLabel: string,
+  ) {
+    goToParagraph(paragraphIndex, {
+      hiddenParagraphNotice: "当前过滤隐藏了该导入预览段落，已切回全书全部段落。",
+      revealHiddenParagraph: true,
+    });
+    setError("");
+    setNotice(
+      `已跳到导入预览中的第 ${paragraphIndex + 1} 段（${reasonLabel}）。`,
+    );
+  }
+
   function downloadContentFile(
     content: string,
     fileName: string,
@@ -3117,6 +3131,9 @@ export function ReaderWorkspace() {
                               "未命名文档"}
                           </p>
                         ) : null}
+                        <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                          点击下面的段落号可直接跳到正文定位，再决定是否继续导入。
+                        </p>
                         {reviewChecklistImportPreview.isDifferentBook ? (
                           <p className="mt-2 text-xs leading-6 text-amber-700">
                             这份清单的元数据看起来不是当前这本书；系统只会对“段落编号存在且原文一致”的内容生效，其余条目会自动跳过。
@@ -3197,27 +3214,16 @@ export function ReaderWorkspace() {
                           <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
                             将更新复查状态
                           </p>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {reviewChecklistImportPreview.mergeResult.reviewUpdateParagraphIndexes
-                              .slice(0, 6)
-                              .map((paragraphIndex) => (
-                                <span
-                                  key={`review-preview-update-${paragraphIndex}`}
-                                  className="rounded-full bg-sky-100 px-3 py-1 text-[11px] font-semibold text-sky-800"
-                                >
-                                  {formatParagraphNumberLabel(paragraphIndex)}
-                                </span>
-                              ))}
-                            {reviewChecklistImportPreview.mergeResult
-                              .reviewUpdateParagraphIndexes.length > 6 ? (
-                              <span className="rounded-full bg-stone-200 px-3 py-1 text-[11px] font-semibold text-stone-700">
-                                还有{" "}
-                                {reviewChecklistImportPreview.mergeResult
-                                  .reviewUpdateParagraphIndexes.length - 6}{" "}
-                                段
-                              </span>
-                            ) : null}
-                          </div>
+                          <ReviewChecklistPreviewParagraphButtons
+                            buttonClassName="bg-sky-100 text-sky-800 hover:bg-sky-200"
+                            jumpLabel="将更新复查状态"
+                            keyPrefix="review-preview-update"
+                            onJump={handleJumpToReviewChecklistPreviewParagraph}
+                            paragraphIndexes={
+                              reviewChecklistImportPreview.mergeResult
+                                .reviewUpdateParagraphIndexes
+                            }
+                          />
                         </div>
                       ) : null}
 
@@ -3227,27 +3233,16 @@ export function ReaderWorkspace() {
                           <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
                             将合并批注
                           </p>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {reviewChecklistImportPreview.mergeResult.bookmarkMergeParagraphIndexes
-                              .slice(0, 6)
-                              .map((paragraphIndex) => (
-                                <span
-                                  key={`review-preview-bookmark-${paragraphIndex}`}
-                                  className="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-semibold text-amber-800"
-                                >
-                                  {formatParagraphNumberLabel(paragraphIndex)}
-                                </span>
-                              ))}
-                            {reviewChecklistImportPreview.mergeResult
-                              .bookmarkMergeParagraphIndexes.length > 6 ? (
-                              <span className="rounded-full bg-stone-200 px-3 py-1 text-[11px] font-semibold text-stone-700">
-                                还有{" "}
-                                {reviewChecklistImportPreview.mergeResult
-                                  .bookmarkMergeParagraphIndexes.length - 6}{" "}
-                                段
-                              </span>
-                            ) : null}
-                          </div>
+                          <ReviewChecklistPreviewParagraphButtons
+                            buttonClassName="bg-amber-100 text-amber-800 hover:bg-amber-200"
+                            jumpLabel="将合并批注"
+                            keyPrefix="review-preview-bookmark"
+                            onJump={handleJumpToReviewChecklistPreviewParagraph}
+                            paragraphIndexes={
+                              reviewChecklistImportPreview.mergeResult
+                                .bookmarkMergeParagraphIndexes
+                            }
+                          />
                         </div>
                       ) : null}
 
@@ -3256,51 +3251,57 @@ export function ReaderWorkspace() {
                           <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
                             将跳过的内容
                           </p>
-                          <div className="mt-3 space-y-2 text-xs leading-6 text-[color:var(--muted)]">
+                          <div className="mt-3 space-y-3 text-xs leading-6 text-[color:var(--muted)]">
                             {reviewChecklistImportPreview.mergeResult
                               .skippedTranslationMismatchCount > 0 ? (
-                              <p>
-                                译文已变化：
-                                {reviewChecklistImportPreview.mergeResult
-                                  .skippedTranslationMismatchParagraphIndexes
-                                  .slice(0, 4)
-                                  .map(formatParagraphNumberLabel)
-                                  .join("、")}
-                                {reviewChecklistImportPreview.mergeResult
-                                  .skippedTranslationMismatchCount > 4
-                                  ? ` 等 ${reviewChecklistImportPreview.mergeResult.skippedTranslationMismatchCount} 段`
-                                  : ""}
-                              </p>
+                              <div>
+                                <p>译文已变化</p>
+                                <ReviewChecklistPreviewParagraphButtons
+                                  buttonClassName="bg-rose-100 text-rose-700 hover:bg-rose-200"
+                                  jumpLabel="译文已变化，已跳过"
+                                  keyPrefix="review-preview-skip-translation"
+                                  limit={4}
+                                  onJump={handleJumpToReviewChecklistPreviewParagraph}
+                                  paragraphIndexes={
+                                    reviewChecklistImportPreview.mergeResult
+                                      .skippedTranslationMismatchParagraphIndexes
+                                  }
+                                />
+                              </div>
                             ) : null}
                             {reviewChecklistImportPreview.mergeResult
                               .skippedSourceMismatchCount > 0 ? (
-                              <p>
-                                原文不匹配：
-                                {reviewChecklistImportPreview.mergeResult
-                                  .skippedSourceMismatchParagraphIndexes
-                                  .slice(0, 4)
-                                  .map(formatParagraphNumberLabel)
-                                  .join("、")}
-                                {reviewChecklistImportPreview.mergeResult
-                                  .skippedSourceMismatchCount > 4
-                                  ? ` 等 ${reviewChecklistImportPreview.mergeResult.skippedSourceMismatchCount} 段`
-                                  : ""}
-                              </p>
+                              <div>
+                                <p>原文不匹配</p>
+                                <ReviewChecklistPreviewParagraphButtons
+                                  buttonClassName="bg-stone-200 text-stone-700 hover:bg-stone-300"
+                                  jumpLabel="原文不匹配，已跳过"
+                                  keyPrefix="review-preview-skip-source"
+                                  limit={4}
+                                  onJump={handleJumpToReviewChecklistPreviewParagraph}
+                                  paragraphIndexes={
+                                    reviewChecklistImportPreview.mergeResult
+                                      .skippedSourceMismatchParagraphIndexes
+                                  }
+                                />
+                              </div>
                             ) : null}
                             {reviewChecklistImportPreview.mergeResult
                               .skippedMissingParagraphCount > 0 ? (
-                              <p>
-                                超出当前书范围：
-                                {reviewChecklistImportPreview.mergeResult
-                                  .skippedMissingParagraphIndexes
-                                  .slice(0, 4)
-                                  .map(formatParagraphNumberLabel)
-                                  .join("、")}
-                                {reviewChecklistImportPreview.mergeResult
-                                  .skippedMissingParagraphCount > 4
-                                  ? ` 等 ${reviewChecklistImportPreview.mergeResult.skippedMissingParagraphCount} 段`
-                                  : ""}
-                              </p>
+                              <div>
+                                <p>超出当前书范围</p>
+                                <ReviewChecklistPreviewParagraphButtons
+                                  buttonClassName="bg-stone-200 text-stone-700 hover:bg-stone-300"
+                                  jumpLabel="超出当前书范围，已跳过"
+                                  keyPrefix="review-preview-skip-missing"
+                                  limit={4}
+                                  onJump={handleJumpToReviewChecklistPreviewParagraph}
+                                  paragraphIndexes={
+                                    reviewChecklistImportPreview.mergeResult
+                                      .skippedMissingParagraphIndexes
+                                  }
+                                />
+                              </div>
                             ) : null}
                           </div>
                         </div>
@@ -3645,6 +3646,47 @@ export function ReaderWorkspace() {
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+type ReviewChecklistPreviewParagraphButtonsProps = {
+  buttonClassName: string;
+  jumpLabel: string;
+  keyPrefix: string;
+  limit?: number;
+  onJump: (paragraphIndex: number, reasonLabel: string) => void;
+  paragraphIndexes: number[];
+};
+
+function ReviewChecklistPreviewParagraphButtons({
+  buttonClassName,
+  jumpLabel,
+  keyPrefix,
+  limit = 6,
+  onJump,
+  paragraphIndexes,
+}: ReviewChecklistPreviewParagraphButtonsProps) {
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {paragraphIndexes.slice(0, limit).map((paragraphIndex) => (
+        <button
+          key={`${keyPrefix}-${paragraphIndex}`}
+          type="button"
+          onClick={() => onJump(paragraphIndex, jumpLabel)}
+          className={cn(
+            "rounded-full px-3 py-1 text-[11px] font-semibold transition",
+            buttonClassName,
+          )}
+        >
+          {formatParagraphNumberLabel(paragraphIndex)}
+        </button>
+      ))}
+      {paragraphIndexes.length > limit ? (
+        <span className="rounded-full bg-stone-200 px-3 py-1 text-[11px] font-semibold text-stone-700">
+          还有 {paragraphIndexes.length - limit} 段
+        </span>
+      ) : null}
     </div>
   );
 }
