@@ -366,6 +366,14 @@ type ReviewQueueSectionGroup = {
   unreviewedCount: number;
 };
 
+type ReviewQueueSummary = {
+  completionPercent: number;
+  completedSectionCount: number;
+  eligibleSectionCount: number;
+  openParagraphCount: number;
+  openSectionCount: number;
+};
+
 type PreflightSummary = {
   blocking: TranslationPreflightIssue[];
   info: TranslationPreflightIssue[];
@@ -994,12 +1002,39 @@ export function LibraryWorkspace() {
     () => reviewQueueSections.filter((group) => group.openCount > 0),
     [reviewQueueSections],
   );
-  const completedReviewSectionCount = useMemo(
+  const completedReviewQueueSections = useMemo(
     () =>
       reviewQueueSections.filter(
         (group) => group.openCount === 0 && group.reviewedCount > 0,
-      ).length,
+      ),
     [reviewQueueSections],
+  );
+  const completedReviewSectionCount = useMemo(
+    () => completedReviewQueueSections.length,
+    [completedReviewQueueSections],
+  );
+  const reviewQueueSummary = useMemo(
+    () =>
+      ({
+        completionPercent:
+          reviewQueueSections.length === 0
+            ? 0
+            : Math.round(
+                (completedReviewSectionCount / reviewQueueSections.length) * 100,
+              ),
+        completedSectionCount: completedReviewSectionCount,
+        eligibleSectionCount: reviewQueueSections.length,
+        openParagraphCount: openReviewQueueSections.reduce(
+          (sum, group) => sum + group.openCount,
+          0,
+        ),
+        openSectionCount: openReviewQueueSections.length,
+      }) satisfies ReviewQueueSummary,
+    [
+      completedReviewSectionCount,
+      openReviewQueueSections,
+      reviewQueueSections.length,
+    ],
   );
   const failedParagraphGroups = useMemo(() => {
     if (!selectedBook) {
@@ -3595,6 +3630,9 @@ export function LibraryWorkspace() {
                             <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
                               优先清掉“待修订”段落，再批量处理“待复查”段落，会比全书来回跳更稳。每个入口都会直接带你进入对应章节和过滤视图。
                             </p>
+                            <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                              当前按“待修订优先，其次待复查，再按章节顺序”排序。
+                            </p>
                             {completedReviewSectionCount > 0 ? (
                               <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
                                 另有 {completedReviewSectionCount} 个已译章节已经全部复核完成。
@@ -3617,107 +3655,186 @@ export function LibraryWorkspace() {
                           </Link>
                         </div>
 
+                        <div className="mt-4 grid gap-3 md:grid-cols-3">
+                          <div className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4">
+                            <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                              已清章节
+                            </p>
+                            <p className="mt-2 text-2xl font-semibold">
+                              {reviewQueueSummary.completedSectionCount}/
+                              {reviewQueueSummary.eligibleSectionCount}
+                            </p>
+                            <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                              已译章节复查完成率 {reviewQueueSummary.completionPercent}%
+                            </p>
+                          </div>
+                          <div className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4">
+                            <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                              待办章节
+                            </p>
+                            <p className="mt-2 text-2xl font-semibold">
+                              {reviewQueueSummary.openSectionCount}
+                            </p>
+                            <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                              仍有待修订或待复查内容的章节数
+                            </p>
+                          </div>
+                          <div className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4">
+                            <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                              待办段落
+                            </p>
+                            <p className="mt-2 text-2xl font-semibold">
+                              {reviewQueueSummary.openParagraphCount}
+                            </p>
+                            <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                              待修订 {reviewStats.needsRevisionCount} 段，待复查{" "}
+                              {reviewStats.unreviewedCount} 段
+                            </p>
+                          </div>
+                        </div>
+
+                        {completedReviewQueueSections.length > 0 ? (
+                          <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-white/80 p-4">
+                            <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                              已清章节
+                            </p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {completedReviewQueueSections
+                                .slice(0, 6)
+                                .map((group) => (
+                                  <span
+                                    key={`review-complete-${group.sectionIndex}`}
+                                    className="rounded-full bg-sky-100 px-3 py-1 text-[11px] font-semibold text-sky-800"
+                                  >
+                                    {group.title}
+                                  </span>
+                                ))}
+                              {completedReviewQueueSections.length > 6 ? (
+                                <span className="rounded-full bg-stone-200 px-3 py-1 text-[11px] font-semibold text-stone-700">
+                                  还有 {completedReviewQueueSections.length - 6} 章
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                        ) : null}
+
                         <div className="mt-4 space-y-3">
-                          {openReviewQueueSections.map((group) => (
-                            <div
-                              key={`review-queue-${group.sectionIndex}`}
-                              className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4"
-                            >
-                              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                <div className="min-w-0">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="text-sm font-semibold">
-                                      {group.title}
-                                    </span>
-                                    <span className="rounded-full bg-stone-200 px-3 py-1 text-[11px] font-semibold text-stone-700">
-                                      第 {group.range.startParagraphIndex + 1} 段 - 第{" "}
-                                      {group.range.endParagraphIndex + 1} 段
-                                    </span>
-                                    {group.needsRevisionCount > 0 ? (
-                                      <span className="rounded-full bg-rose-100 px-3 py-1 text-[11px] font-semibold text-rose-700">
-                                        待修订 {group.needsRevisionCount}
+                          {openReviewQueueSections.map((group) => {
+                            const reviewedPercent =
+                              group.translatedCount === 0
+                                ? 0
+                                : Math.round(
+                                    (group.reviewedCount / group.translatedCount) * 100,
+                                  );
+
+                            return (
+                              <div
+                                key={`review-queue-${group.sectionIndex}`}
+                                className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4"
+                              >
+                                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="text-sm font-semibold">
+                                        {group.title}
                                       </span>
-                                    ) : null}
-                                    {group.unreviewedCount > 0 ? (
-                                      <span className="rounded-full bg-violet-100 px-3 py-1 text-[11px] font-semibold text-violet-800">
-                                        待复查 {group.unreviewedCount}
+                                      <span className="rounded-full bg-stone-200 px-3 py-1 text-[11px] font-semibold text-stone-700">
+                                        第 {group.range.startParagraphIndex + 1} 段 - 第{" "}
+                                        {group.range.endParagraphIndex + 1} 段
                                       </span>
-                                    ) : null}
-                                    {group.reviewedCount > 0 ? (
-                                      <span className="rounded-full bg-sky-100 px-3 py-1 text-[11px] font-semibold text-sky-800">
-                                        已复核 {group.reviewedCount}
-                                      </span>
-                                    ) : null}
+                                      {group.needsRevisionCount > 0 ? (
+                                        <span className="rounded-full bg-rose-100 px-3 py-1 text-[11px] font-semibold text-rose-700">
+                                          待修订 {group.needsRevisionCount}
+                                        </span>
+                                      ) : null}
+                                      {group.unreviewedCount > 0 ? (
+                                        <span className="rounded-full bg-violet-100 px-3 py-1 text-[11px] font-semibold text-violet-800">
+                                          待复查 {group.unreviewedCount}
+                                        </span>
+                                      ) : null}
+                                      {group.reviewedCount > 0 ? (
+                                        <span className="rounded-full bg-sky-100 px-3 py-1 text-[11px] font-semibold text-sky-800">
+                                          已复核 {group.reviewedCount}
+                                        </span>
+                                      ) : null}
+                                    </div>
+
+                                    <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                                      本章已译 {group.translatedCount} 段，其中仍有 {group.openCount} 段需要继续处理；当前复查完成度 {reviewedPercent}%。
+                                    </p>
+
+                                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-stone-200">
+                                      <div
+                                        className="h-full rounded-full bg-sky-500 transition-[width]"
+                                        style={{ width: `${reviewedPercent}%` }}
+                                      />
+                                    </div>
+
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      {group.firstNeedsRevisionParagraphIndex !== null ? (
+                                        <span className="rounded-full bg-[color:var(--panel)] px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
+                                          首个待修订：第 {group.firstNeedsRevisionParagraphIndex + 1} 段
+                                        </span>
+                                      ) : null}
+                                      {group.firstUnreviewedParagraphIndex !== null ? (
+                                        <span className="rounded-full bg-[color:var(--panel)] px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
+                                          首个待复查：第 {group.firstUnreviewedParagraphIndex + 1} 段
+                                        </span>
+                                      ) : null}
+                                    </div>
                                   </div>
 
-                                  <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
-                                    本章已译 {group.translatedCount} 段，其中仍有 {group.openCount} 段需要继续处理。
-                                  </p>
-
-                                  <div className="mt-3 flex flex-wrap gap-2">
+                                  <div className="flex flex-wrap gap-2">
+                                    {group.firstOpenParagraphIndex !== null ? (
+                                      <Link
+                                        href={buildLibraryHref(selectedBook.id, {
+                                          paragraph: group.firstOpenParagraphIndex + 1,
+                                        })}
+                                        className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                                      >
+                                        定位首个任务
+                                      </Link>
+                                    ) : null}
                                     {group.firstNeedsRevisionParagraphIndex !== null ? (
-                                      <span className="rounded-full bg-[color:var(--panel)] px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
-                                        首个待修订：第 {group.firstNeedsRevisionParagraphIndex + 1} 段
-                                      </span>
+                                      <Link
+                                        href={buildReaderHref(selectedBook.id, {
+                                          filter: "needs-revision",
+                                          paragraph:
+                                            group.firstNeedsRevisionParagraphIndex + 1,
+                                          scope: "section",
+                                        })}
+                                        className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                                      >
+                                        本章待修订
+                                      </Link>
                                     ) : null}
                                     {group.firstUnreviewedParagraphIndex !== null ? (
-                                      <span className="rounded-full bg-[color:var(--panel)] px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
-                                        首个待复查：第 {group.firstUnreviewedParagraphIndex + 1} 段
-                                      </span>
+                                      <Link
+                                        href={buildReaderHref(selectedBook.id, {
+                                          filter: "unreviewed-translated",
+                                          paragraph:
+                                            group.firstUnreviewedParagraphIndex + 1,
+                                          scope: "section",
+                                        })}
+                                        className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                                      >
+                                        本章待复查
+                                      </Link>
                                     ) : null}
+                                    <Link
+                                      href={buildReaderHref(selectedBook.id, {
+                                        paragraph: group.range.startParagraphIndex + 1,
+                                        scope: "section",
+                                      })}
+                                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                                    >
+                                      整章复查
+                                    </Link>
                                   </div>
                                 </div>
-
-                                <div className="flex flex-wrap gap-2">
-                                  {group.firstOpenParagraphIndex !== null ? (
-                                    <Link
-                                      href={buildLibraryHref(selectedBook.id, {
-                                        paragraph: group.firstOpenParagraphIndex + 1,
-                                      })}
-                                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
-                                    >
-                                      定位首个任务
-                                    </Link>
-                                  ) : null}
-                                  {group.firstNeedsRevisionParagraphIndex !== null ? (
-                                    <Link
-                                      href={buildReaderHref(selectedBook.id, {
-                                        filter: "needs-revision",
-                                        paragraph:
-                                          group.firstNeedsRevisionParagraphIndex + 1,
-                                        scope: "section",
-                                      })}
-                                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
-                                    >
-                                      本章待修订
-                                    </Link>
-                                  ) : null}
-                                  {group.firstUnreviewedParagraphIndex !== null ? (
-                                    <Link
-                                      href={buildReaderHref(selectedBook.id, {
-                                        filter: "unreviewed-translated",
-                                        paragraph:
-                                          group.firstUnreviewedParagraphIndex + 1,
-                                        scope: "section",
-                                      })}
-                                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
-                                    >
-                                      本章待复查
-                                    </Link>
-                                  ) : null}
-                                  <Link
-                                    href={buildReaderHref(selectedBook.id, {
-                                      paragraph: group.range.startParagraphIndex + 1,
-                                      scope: "section",
-                                    })}
-                                    className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
-                                  >
-                                    整章复查
-                                  </Link>
-                                </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     ) : reviewStats.translatedCount > 0 ? (
@@ -3729,7 +3846,7 @@ export function LibraryWorkspace() {
                           当前没有待复查或待修订的章节任务。
                         </p>
                         <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
-                          已译内容要么已经全部复核完成，要么还没有形成需要人工复查的稳定译文。
+                          已译内容要么已经全部复核完成，要么还没有形成需要人工复查的稳定译文。当前共 {reviewQueueSummary.eligibleSectionCount} 个已译章节，其中 {reviewQueueSummary.completedSectionCount} 个已经清完。
                         </p>
                       </div>
                     ) : null}
