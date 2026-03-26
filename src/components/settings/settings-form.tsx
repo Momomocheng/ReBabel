@@ -354,8 +354,10 @@ type FieldProps = {
 
 function Field({ children, error, help, htmlFor, label }: FieldProps) {
   return (
-    <label htmlFor={htmlFor} className="block">
-      <span className="text-sm font-semibold">{label}</span>
+    <div className="block">
+      <label htmlFor={htmlFor} className="text-sm font-semibold">
+        {label}
+      </label>
       {children}
       <p
         className={cn(
@@ -365,7 +367,7 @@ function Field({ children, error, help, htmlFor, label }: FieldProps) {
       >
         {error ?? help}
       </p>
-    </label>
+    </div>
   );
 }
 
