@@ -354,6 +354,66 @@ test("reader keeps search filter and deep link after reload", async ({
   await expect(page.getByText("书籍已从当前浏览器的本地书库删除。")).toBeVisible();
 });
 
+test("copied reader link reopens the same book state", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name.includes("mobile"),
+    "The share-link flow is validated on desktop to keep runtime focused.",
+  );
+  test.setTimeout(120_000);
+
+  await installMockTranslationRoute(page);
+  await configureSettings(page);
+  await importSampleBook(page, "Copied Link Sample");
+  await translateCurrentBook(page);
+
+  await page.getByRole("link", { name: "进入阅读器" }).click();
+  await expect(page).toHaveURL(/\/reader/);
+
+  await page.getByLabel("站内搜索").fill("冬天");
+  await page.getByRole("button", { name: "更新搜索链接" }).click();
+  await expect(page.getByText(/已更新搜索链接，当前命中 2 段。/)).toBeVisible();
+  await page.getByRole("button", { name: /搜索命中 \(\d+\)/ }).click();
+  await page.getByRole("button", { name: "下一处命中" }).click();
+  await expect(page.getByText("当前读到第 5 段")).toBeVisible();
+
+  await page.context().grantPermissions(
+    ["clipboard-read", "clipboard-write"],
+    { origin: new URL(page.url()).origin },
+  );
+  await page.getByRole("button", { name: "复制当前位置链接" }).click();
+  await expect(page.getByText("已复制第 5 段的阅读链接。")).toBeVisible();
+
+  const sharedUrl = await page.evaluate(() => navigator.clipboard.readText());
+  const parsedUrl = new URL(sharedUrl);
+
+  expect(parsedUrl.pathname).toContain("/reader");
+  expect(parsedUrl.searchParams.get("q")).toBe("冬天");
+  expect(parsedUrl.searchParams.get("filter")).toBe("search-results");
+  expect(parsedUrl.searchParams.get("p")).toBe("5");
+  expect(parsedUrl.searchParams.get("book")).toBeTruthy();
+
+  const sharedPage = await page.context().newPage();
+  await sharedPage.goto(sharedUrl);
+  await expect(sharedPage).toHaveURL(/\/reader/);
+  await expect(sharedPage.getByText("Copied Link Sample").first()).toBeVisible();
+  await expect(sharedPage.getByLabel("站内搜索")).toHaveValue("冬天");
+  await expect(sharedPage.getByText("当前读到第 5 段")).toBeVisible();
+  await expect
+    .poll(() => new URL(sharedPage.url()).searchParams.get("filter"))
+    .toBe("search-results");
+  await attachScreenshot(sharedPage, testInfo, "desktop-reader-copied-link-opened");
+  await sharedPage.close();
+
+  await page.getByRole("link", { name: "返回书库" }).click();
+  await expect(page).toHaveURL(/\/library/);
+  await page
+    .getByRole("button", { name: "删除 Copied Link Sample" })
+    .click();
+  await expect(page.getByText("书籍已从当前浏览器的本地书库删除。")).toBeVisible();
+});
+
 test("mobile workflow supports import, translation, and reader navigation", async ({
   page,
 }, testInfo) => {
