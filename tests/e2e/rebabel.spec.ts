@@ -62,7 +62,7 @@ async function createSampleEpub(testInfo: TestInfo) {
   </head>
   <body>
     <h1>Lantern Street</h1>
-    <p>Mira kept walking until the bakery lights came into view.</p>
+    <p>Mira kept walking until the bakery lights came into view, the letter still warm in her pocket.</p>
     <p>She promised herself the letter would be delivered before dawn.</p>
   </body>
 </html>`),
@@ -309,7 +309,9 @@ test("EPUB reader section navigation keeps chapter-focused browsing", async ({
   await expect(page.getByText(/当前读到第 4 段 · 当前章节「Lantern Street」/)).toBeVisible();
   await expect(page.getByText("Lantern Street").first()).toBeVisible();
   await expect(
-    page.getByText("Mira kept walking until the bakery lights came into view."),
+    page.getByText(
+      "Mira kept walking until the bakery lights came into view, the letter still warm in her pocket.",
+    ),
   ).toBeVisible();
   await expect(
     page.getByText("The clock in the hall struck six before anyone spoke."),
@@ -326,11 +328,108 @@ test("EPUB reader section navigation keeps chapter-focused browsing", async ({
 
   await expect(page.getByText(/当前读到第 4 段 · 当前章节「Lantern Street」/)).toBeVisible();
   await expect(
-    page.getByText("Mira kept walking until the bakery lights came into view."),
+    page.getByText(
+      "Mira kept walking until the bakery lights came into view, the letter still warm in her pocket.",
+    ),
   ).toBeVisible();
   await expect
     .poll(() => new URL(page.url()).searchParams.get("scope"))
     .toBe("section");
+
+  await page.getByRole("link", { name: "返回书库" }).click();
+  await expect(page).toHaveURL(/\/library/);
+  await page
+    .getByRole("button", { name: "删除 Playwright EPUB Sample" })
+    .click();
+  await expect(page.getByText("书籍已从当前浏览器的本地书库删除。")).toBeVisible();
+});
+
+test("EPUB chapter-scoped search links reopen the same filtered reading state", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name.includes("mobile"),
+    "The chapter-scoped search flow is covered on desktop to keep CI runtime focused.",
+  );
+
+  const epubPath = await createSampleEpub(testInfo);
+
+  await page.goto("/library");
+  await page.getByLabel("导入英文原著文件").setInputFiles(epubPath);
+  await expect(page.getByRole("heading", { name: "导入预览与清洗" })).toBeVisible();
+  await page.getByRole("button", { name: "保存到本地书库" }).click();
+  await expect(page.getByText("已把《Playwright EPUB Sample》保存到本地书库")).toBeVisible();
+
+  await page.getByRole("link", { name: "进入阅读器" }).click();
+  await expect(page).toHaveURL(/\/reader/);
+
+  await page.getByRole("button", { name: /Lantern Street/ }).click();
+  await expect(page.getByText("已切到章节「Lantern Street」，并聚焦本章内容。")).toBeVisible();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("scope"))
+    .toBe("section");
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("p"))
+    .toBe("4");
+
+  await page.getByLabel("站内搜索").fill("letter");
+  await page.getByRole("button", { name: "更新搜索链接" }).click();
+  await expect(page.getByText("已更新搜索链接，当前命中 2 段。")).toBeVisible();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("q"))
+    .toBe("letter");
+
+  await page.getByRole("button", { name: "搜索命中 (2)" }).click();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("filter"))
+    .toBe("search-results");
+  await expect(page.getByText("当前读到第 5 段")).toBeVisible();
+
+  await page.getByRole("button", { name: "下一处命中" }).click();
+  await expect(page.getByText("当前读到第 6 段")).toBeVisible();
+  await expect(
+    page.getByText("She promised herself the letter would be delivered before dawn."),
+  ).toBeVisible();
+  await expect(
+    page.getByText("The clock in the hall struck six before anyone spoke."),
+  ).not.toBeVisible();
+
+  await page.context().grantPermissions(
+    ["clipboard-read", "clipboard-write"],
+    { origin: new URL(page.url()).origin },
+  );
+  await page.getByRole("button", { name: "复制当前位置链接" }).click();
+  await expect(page.getByText("已复制第 6 段的阅读链接。")).toBeVisible();
+
+  const sharedUrl = await page.evaluate(() => navigator.clipboard.readText());
+  const parsedUrl = new URL(sharedUrl);
+
+  expect(parsedUrl.searchParams.get("q")).toBe("letter");
+  expect(parsedUrl.searchParams.get("filter")).toBe("search-results");
+  expect(parsedUrl.searchParams.get("scope")).toBe("section");
+  expect(parsedUrl.searchParams.get("p")).toBe("6");
+  expect(parsedUrl.searchParams.get("book")).toBeTruthy();
+
+  const sharedPage = await page.context().newPage();
+  await sharedPage.goto(sharedUrl);
+  await expect(sharedPage).toHaveURL(/\/reader/);
+  await expect(sharedPage.getByLabel("站内搜索")).toHaveValue("letter");
+  await expect(sharedPage.getByText(/当前读到第 6 段 · 当前章节「Lantern Street」/)).toBeVisible();
+  await expect(sharedPage.getByText("搜索命中 (2)")).toBeVisible();
+  await expect(
+    sharedPage.getByText("She promised herself the letter would be delivered before dawn."),
+  ).toBeVisible();
+  await expect(
+    sharedPage.getByText("The clock in the hall struck six before anyone spoke."),
+  ).not.toBeVisible();
+  await expect
+    .poll(() => new URL(sharedPage.url()).searchParams.get("filter"))
+    .toBe("search-results");
+  await expect
+    .poll(() => new URL(sharedPage.url()).searchParams.get("scope"))
+    .toBe("section");
+  await attachScreenshot(sharedPage, testInfo, "desktop-epub-reader-shared-search-scope");
+  await sharedPage.close();
 
   await page.getByRole("link", { name: "返回书库" }).click();
   await expect(page).toHaveURL(/\/library/);

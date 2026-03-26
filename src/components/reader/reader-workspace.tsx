@@ -881,6 +881,15 @@ export function ReaderWorkspace() {
       ];
     });
   }, [normalizedSearchQuery, selectedBook]);
+  const visibleSearchResults = useMemo(
+    () =>
+      paragraphScope === "section"
+        ? searchResults.filter((result) =>
+            isParagraphIndexInRange(result.paragraphIndex, activeSectionRange),
+          )
+        : searchResults,
+    [activeSectionRange, paragraphScope, searchResults],
+  );
   const searchHitParagraphIndexes = useMemo(
     () => new Set(searchResults.map((result) => result.paragraphIndex)),
     [searchResults],
@@ -888,19 +897,11 @@ export function ReaderWorkspace() {
   const paragraphFilterCounts = useMemo(
     () => ({
       ...baseParagraphFilterCounts,
-      "search-results":
-        paragraphScope === "section"
-          ? activeSectionParagraphs.filter((paragraph) =>
-              searchHitParagraphIndexes.has(paragraph.index),
-            ).length
-          : searchResults.length,
+      "search-results": visibleSearchResults.length,
     }),
     [
-      activeSectionParagraphs,
       baseParagraphFilterCounts,
-      paragraphScope,
-      searchHitParagraphIndexes,
-      searchResults.length,
+      visibleSearchResults.length,
     ],
   );
   const filteredParagraphs = useMemo(() => {
@@ -1012,8 +1013,8 @@ export function ReaderWorkspace() {
     [filteredTranslatedParagraphs],
   );
   const activeSearchResultIndex = useMemo(
-    () => findSearchResultIndex(searchResults, activeParagraphIndex),
-    [activeParagraphIndex, searchResults],
+    () => findSearchResultIndex(visibleSearchResults, activeParagraphIndex),
+    [activeParagraphIndex, visibleSearchResults],
   );
   const activeFilteredParagraphPosition = useMemo(
     () => findFilteredParagraphPosition(filteredParagraphs, activeParagraphIndex),
@@ -1088,7 +1089,7 @@ export function ReaderWorkspace() {
       return;
     }
 
-    if (normalizedKey === "n" && searchResults.length > 0) {
+    if (normalizedKey === "n" && visibleSearchResults.length > 0) {
       event.preventDefault();
       handleJumpBetweenSearchResults(event.shiftKey ? "previous" : "next");
       return;
@@ -1600,8 +1601,8 @@ export function ReaderWorkspace() {
     }
 
     setNotice(
-      searchResults.length > 0
-        ? `已更新搜索链接，当前命中 ${searchResults.length} 段。`
+      visibleSearchResults.length > 0
+        ? `已更新搜索链接，当前命中 ${visibleSearchResults.length} 段。`
         : "已更新搜索链接，但当前没有匹配结果。",
     );
   }
@@ -1624,16 +1625,16 @@ export function ReaderWorkspace() {
   }
 
   function handleJumpBetweenSearchResults(direction: SearchNavigationDirection) {
-    if (searchResults.length === 0) {
+    if (visibleSearchResults.length === 0) {
       return;
     }
 
     const targetResultIndex = resolveSearchNavigationIndex(
-      searchResults,
+      visibleSearchResults,
       activeParagraphIndex,
       direction,
     );
-    const targetResult = searchResults[targetResultIndex];
+    const targetResult = visibleSearchResults[targetResultIndex];
 
     if (!targetResult) {
       return;
@@ -1644,7 +1645,7 @@ export function ReaderWorkspace() {
       revealHiddenParagraph: true,
     });
     setNotice(
-      `已跳到第 ${targetResult.paragraphIndex + 1} 段（搜索命中 ${targetResultIndex + 1}/${searchResults.length}）。`,
+      `已跳到第 ${targetResult.paragraphIndex + 1} 段（搜索命中 ${targetResultIndex + 1}/${visibleSearchResults.length}）。`,
     );
   }
 
@@ -2931,9 +2932,9 @@ export function ReaderWorkspace() {
 
                   {normalizedSearchQuery ? (
                     <p className="mt-3 text-xs leading-6 text-[color:var(--muted)]">
-                      当前命中 {searchResults.length} 段。
+                      当前命中 {visibleSearchResults.length} 段。
                       {activeSearchResultIndex >= 0
-                        ? ` 你正在查看第 ${activeSearchResultIndex + 1}/${searchResults.length} 个命中。`
+                        ? ` 你正在查看第 ${activeSearchResultIndex + 1}/${visibleSearchResults.length} 个命中。`
                         : " 当前阅读位置还不在命中段落里。"}
                       地址栏中的 `q` 可直接分享给别人在同一本书里复现搜索，也可以在下方阅读过滤里切到“搜索命中”。
                     </p>
@@ -2947,7 +2948,7 @@ export function ReaderWorkspace() {
                     快捷键：`j` / `k` 或 `↑` / `↓` 切换段落，`[` / `]` 在当前过滤结果里前后跳转，`n` / `Shift+n` 在搜索命中间跳转，`/` 聚焦搜索框。
                   </p>
 
-                  {normalizedSearchQuery && searchResults.length > 0 ? (
+                  {normalizedSearchQuery && visibleSearchResults.length > 0 ? (
                     <div className="mt-4 flex flex-wrap gap-2">
                       <button
                         type="button"
@@ -2967,14 +2968,14 @@ export function ReaderWorkspace() {
                   ) : null}
 
                   {normalizedSearchQuery ? (
-                    searchResults.length === 0 ? (
+                    visibleSearchResults.length === 0 ? (
                       <div className="mt-4 rounded-[20px] border border-dashed border-[color:var(--line)] bg-white/70 px-4 py-5 text-sm leading-6 text-[color:var(--muted)]">
                         没有找到匹配段落。可以换一个关键词，或者先检查这本书是否已生成中文译文。
                       </div>
                     ) : (
                       <div className="mt-4">
                         <div className="max-h-60 space-y-2 overflow-y-auto pr-1">
-                          {searchResults.slice(0, 18).map((result) => (
+                          {visibleSearchResults.slice(0, 18).map((result) => (
                             <button
                               key={result.paragraphIndex}
                               type="button"
@@ -3020,7 +3021,7 @@ export function ReaderWorkspace() {
                           ))}
                         </div>
 
-                        {searchResults.length > 18 ? (
+                        {visibleSearchResults.length > 18 ? (
                           <p className="mt-3 text-xs leading-6 text-[color:var(--muted)]">
                             当前仅展示前 18 条结果。更具体的关键词能更快定位到目标段落。
                           </p>
