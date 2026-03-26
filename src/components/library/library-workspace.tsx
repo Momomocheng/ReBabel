@@ -2670,6 +2670,7 @@ export function LibraryWorkspace() {
             <input
               type="file"
               accept=".txt,.epub,text/plain,application/epub+zip"
+              aria-label="导入英文原著文件"
               className="sr-only"
               onChange={handleImport}
               disabled={isImporting || isImportingBackup || isTranslating}
@@ -2689,6 +2690,7 @@ export function LibraryWorkspace() {
                 ref={backupImportInputRef}
                 type="file"
                 accept=".json,application/json"
+                aria-label="导入整书备份 JSON"
                 className="sr-only"
                 onChange={(event) => void handleImportBookBackup(event)}
                 disabled={isImporting || isImportingBackup || isTranslating}
@@ -2830,6 +2832,7 @@ export function LibraryWorkspace() {
                       type="text"
                       value={importDraftSearch}
                       onChange={(event) => setImportDraftSearch(event.target.value)}
+                      aria-label="搜索导入草稿段落"
                       className="mt-3 w-full rounded-2xl border border-[color:var(--line)] bg-white px-4 py-3 text-sm outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--accent)] focus:ring-4 focus:ring-[color:var(--accent-soft)]"
                       placeholder="搜索段落内容，例如 copyright、contents、isbn、chapter"
                     />
@@ -2980,7 +2983,7 @@ export function LibraryWorkspace() {
           />
         </div>
 
-        <div className="mt-6 min-h-10 text-sm leading-6">
+        <div aria-live="polite" className="mt-6 min-h-10 text-sm leading-6">
           {error ? <p className="text-red-600">{error}</p> : null}
           {!error && notice ? (
             <p className="font-semibold text-[color:var(--accent-strong)]">{notice}</p>
@@ -4432,6 +4435,7 @@ export function LibraryWorkspace() {
                         type="button"
                         onClick={handleExportPreferredReadableBook}
                         disabled={!canExportReadableBook}
+                        aria-label="按当前设置导出书籍"
                         className="inline-flex items-center justify-center gap-2 rounded-full bg-[color:var(--accent)] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[color:var(--accent-strong)] disabled:cursor-not-allowed disabled:bg-stone-300"
                       >
                         <Download className="h-4 w-4" />
@@ -4440,6 +4444,7 @@ export function LibraryWorkspace() {
                       <button
                         type="button"
                         onClick={handleExportBookAsJson}
+                        aria-label="导出整书 JSON"
                         className="inline-flex items-center justify-center gap-2 rounded-full border border-[color:var(--line)] bg-white px-4 py-3 text-sm font-semibold transition hover:bg-stone-50"
                       >
                         <Download className="h-4 w-4" />
@@ -4505,6 +4510,7 @@ export function LibraryWorkspace() {
                           ref={glossaryImportInputRef}
                           type="file"
                           accept=".json,application/json"
+                          aria-label="导入术语表 JSON"
                           className="sr-only"
                           onChange={(event) => void handleImportGlossary(event)}
                           disabled={!preferencesHydrated}
@@ -4522,6 +4528,7 @@ export function LibraryWorkspace() {
                           type="button"
                           onClick={handleExportGlossary}
                           disabled={!preferencesHydrated || glossaryTerms.length === 0}
+                          aria-label="导出术语表 JSON"
                           className="inline-flex items-center justify-center gap-2 rounded-full border border-[color:var(--line)] bg-white px-3 py-2 text-xs font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
                         >
                           <Download className="h-4 w-4" />

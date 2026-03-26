@@ -2193,7 +2193,7 @@ export function ReaderWorkspace() {
           />
         </div>
 
-        <div className="mt-6 min-h-10 text-sm leading-6">
+        <div aria-live="polite" className="mt-6 min-h-10 text-sm leading-6">
           {error ? <p className="text-red-600">{error}</p> : null}
           {!error && notice ? (
             <p className="font-semibold text-[color:var(--accent-strong)]">{notice}</p>
@@ -2507,6 +2507,7 @@ export function ReaderWorkspace() {
                         type="number"
                         min={1}
                         max={selectedBook.paragraphs.length}
+                        aria-label="跳转到指定段落"
                         value={jumpParagraphInput}
                         onChange={(event) => setJumpParagraphInput(event.target.value)}
                         className="w-full rounded-2xl border border-[color:var(--line)] bg-white px-4 py-3 text-sm outline-none transition focus:border-[color:var(--accent)] focus:ring-4 focus:ring-[color:var(--accent-soft)]"
@@ -2568,6 +2569,7 @@ export function ReaderWorkspace() {
                         ref={readingNotesImportInputRef}
                         type="file"
                         accept=".json,application/json"
+                        aria-label="导入阅读笔记 JSON"
                         className="sr-only"
                         onChange={(event) => void handleImportReadingNotes(event)}
                       />
@@ -2633,6 +2635,7 @@ export function ReaderWorkspace() {
                       </p>
                       <textarea
                         rows={5}
+                        aria-label="当前段落批注"
                         value={bookmarkNoteInput}
                         onChange={(event) => setBookmarkNoteInput(event.target.value)}
                         className="mt-3 w-full rounded-2xl border border-[color:var(--line)] bg-white px-4 py-3 text-sm leading-7 outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--accent)] focus:ring-4 focus:ring-[color:var(--accent-soft)]"
@@ -2878,6 +2881,7 @@ export function ReaderWorkspace() {
                     <input
                       ref={searchInputRef}
                       type="text"
+                      aria-label="站内搜索"
                       value={searchInput}
                       onChange={(event) => setSearchInput(event.target.value)}
                       className="min-w-0 flex-1 rounded-2xl border border-[color:var(--line)] bg-white px-4 py-3 text-sm outline-none transition placeholder:text-[color:var(--muted)] focus:border-[color:var(--accent)] focus:ring-4 focus:ring-[color:var(--accent-soft)]"
@@ -3078,6 +3082,7 @@ export function ReaderWorkspace() {
                       ref={reviewChecklistImportInputRef}
                       type="file"
                       accept=".json,application/json"
+                      aria-label="导入复查清单 JSON"
                       className="sr-only"
                       onChange={(event) => void handleImportReviewChecklist(event)}
                     />

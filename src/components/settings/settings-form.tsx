@@ -139,7 +139,7 @@ export function SettingsForm() {
       </div>
 
       {!isHydrated ? (
-        <div className="py-16 text-sm text-[color:var(--muted)]">
+        <div aria-live="polite" className="py-16 text-sm text-[color:var(--muted)]">
           正在读取本地配置...
         </div>
       ) : (
@@ -312,7 +312,7 @@ function HydratedSettingsForm({
       </div>
 
       <div className="flex flex-col gap-4 border-t border-[color:var(--line)] pt-6 md:flex-row md:items-center md:justify-between">
-        <div className="text-sm leading-6 text-[color:var(--muted)]">
+        <div aria-live="polite" className="text-sm leading-6 text-[color:var(--muted)]">
           <p>第一步完成后，下一步就能接上传 `.txt`、段落分块和翻译进度条。</p>
           {notice ? (
             <p className="font-semibold text-[color:var(--accent-strong)]">
