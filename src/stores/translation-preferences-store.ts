@@ -14,11 +14,13 @@ import {
 } from "@/lib/books/export-options";
 import {
   DEFAULT_TRANSLATION_BATCH_SCOPE,
+  TRANSLATION_BATCH_HISTORY_LIMIT,
   DEFAULT_TRANSLATION_CONTEXT_SIZE,
   MIN_TRANSLATION_REQUEST_DELAY_MS,
   normalizeTranslationBatchScope,
   normalizeTranslationContextSize,
   normalizeTranslationRequestDelayMs,
+  type TranslationBatchHistoryEntry,
   type TranslationBatchSession,
   type TranslationBatchScope,
 } from "@/lib/translation/preferences";
@@ -27,7 +29,10 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 type TranslationPreferencesState = {
+  addBatchHistoryEntry: (entry: TranslationBatchHistoryEntry) => void;
+  batchHistoryEntries: TranslationBatchHistoryEntry[];
   batchScope: TranslationBatchScope;
+  clearBatchHistoryForBook: (bookId: string) => void;
   clearLastBatchSession: () => void;
   contextSize: number;
   extraInstructions: string;
@@ -67,6 +72,7 @@ const STORAGE_KEY = "rebabel.translation-preferences.v1";
 
 function getDefaultState(): Pick<
   TranslationPreferencesState,
+  | "batchHistoryEntries"
   | "batchScope"
   | "contextSize"
   | "extraInstructions"
@@ -78,6 +84,7 @@ function getDefaultState(): Pick<
   | "textExportScope"
 > {
   return {
+    batchHistoryEntries: [],
     batchScope: DEFAULT_TRANSLATION_BATCH_SCOPE,
     contextSize: DEFAULT_TRANSLATION_CONTEXT_SIZE,
     extraInstructions: "",
@@ -90,14 +97,38 @@ function getDefaultState(): Pick<
   };
 }
 
+function createBatchHistoryEntryId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return `batch-history-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export const useTranslationPreferencesStore =
   create<TranslationPreferencesState>()(
     persist(
       (set) => ({
         ...getDefaultState(),
+        addBatchHistoryEntry: (entry) =>
+          set((state) => ({
+            batchHistoryEntries: [
+              {
+                ...entry,
+                id: entry.id || createBatchHistoryEntryId(),
+              },
+              ...state.batchHistoryEntries,
+            ].slice(0, TRANSLATION_BATCH_HISTORY_LIMIT),
+          })),
         addGlossaryTerm: () =>
           set((state) => ({
             glossaryTerms: [...state.glossaryTerms, createGlossaryTerm()],
+          })),
+        clearBatchHistoryForBook: (bookId) =>
+          set((state) => ({
+            batchHistoryEntries: state.batchHistoryEntries.filter(
+              (entry) => entry.bookId !== bookId,
+            ),
           })),
         resetPreferredReadableExportFormat: () =>
           set(() => ({
@@ -192,6 +223,7 @@ export const useTranslationPreferencesStore =
         name: STORAGE_KEY,
         storage: createJSONStorage(() => localStorage),
         partialize: (state) => ({
+          batchHistoryEntries: state.batchHistoryEntries,
           batchScope: state.batchScope,
           contextSize: state.contextSize,
           extraInstructions: state.extraInstructions,

@@ -11,6 +11,7 @@ export const TRANSLATION_BATCH_SCOPE_VALUES = [
 export const DEFAULT_TRANSLATION_BATCH_SCOPE = "remaining";
 export const MIN_TRANSLATION_REQUEST_DELAY_MS = 0;
 export const MAX_TRANSLATION_REQUEST_DELAY_MS = 5000;
+export const TRANSLATION_BATCH_HISTORY_LIMIT = 24;
 
 export type TranslationBatchScope =
   (typeof TRANSLATION_BATCH_SCOPE_VALUES)[number];
@@ -39,6 +40,11 @@ export type TranslationBatchSession = {
   status: TranslationBatchSessionStatus;
   successCount: number;
   updatedAt: string;
+};
+
+export type TranslationBatchHistoryEntry = TranslationBatchSession & {
+  endedAt: string;
+  id: string;
 };
 
 export function normalizeTranslationContextSize(value: number | null | undefined) {

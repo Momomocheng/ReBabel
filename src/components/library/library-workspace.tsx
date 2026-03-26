@@ -92,6 +92,7 @@ import {
   normalizeTranslationBatchScope,
   normalizeTranslationContextSize,
   normalizeTranslationRequestDelayMs,
+  type TranslationBatchHistoryEntry,
   type TranslationBatchSession,
   type TranslationBatchScope,
 } from "@/lib/translation/preferences";
@@ -488,6 +489,17 @@ function formatDuration(ms: number) {
   return `${seconds} 秒`;
 }
 
+function formatDurationBetween(startedAt: string, endedAt: string) {
+  const durationMs =
+    new Date(endedAt).getTime() - new Date(startedAt).getTime();
+
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    return "不到 1 秒";
+  }
+
+  return formatDuration(durationMs);
+}
+
 function buildParagraphRangeSummary(indexes: number[]) {
   if (indexes.length === 0) {
     return "";
@@ -598,7 +610,10 @@ export function LibraryWorkspace() {
     })),
   );
   const {
+    addBatchHistoryEntry,
+    batchHistoryEntries,
     batchScope,
+    clearBatchHistoryForBook,
     clearLastBatchSession,
     contextSize,
     addGlossaryTerm,
@@ -628,7 +643,10 @@ export function LibraryWorkspace() {
     updateGlossaryTerm,
   } = useTranslationPreferencesStore(
     useShallow((state) => ({
+      addBatchHistoryEntry: state.addBatchHistoryEntry,
+      batchHistoryEntries: state.batchHistoryEntries,
       batchScope: state.batchScope,
+      clearBatchHistoryForBook: state.clearBatchHistoryForBook,
       clearLastBatchSession: state.clearLastBatchSession,
       contextSize: state.contextSize,
       addGlossaryTerm: state.addGlossaryTerm,
@@ -836,6 +854,17 @@ export function LibraryWorkspace() {
         ? lastBatchSession
         : null,
     [lastBatchSession, selectedBook],
+  );
+  const currentBookBatchHistory = useMemo(
+    () =>
+      selectedBook
+        ? batchHistoryEntries.filter((entry) => entry.bookId === selectedBook.id)
+        : ([] as TranslationBatchHistoryEntry[]),
+    [batchHistoryEntries, selectedBook],
+  );
+  const visibleCurrentBookBatchHistory = useMemo(
+    () => currentBookBatchHistory.slice(0, 6),
+    [currentBookBatchHistory],
   );
   const importDraftParagraphs = useMemo(
     () => (importDraft ? normalizeImportDraftParagraphs(importDraft.paragraphs) : []),
@@ -1592,6 +1621,7 @@ export function LibraryWorkspace() {
       if (lastBatchSession?.bookId === bookId) {
         clearLastBatchSession();
       }
+      clearBatchHistoryForBook(bookId);
       setSelectedBookId((current) =>
         current === bookId ? (nextBooks[0]?.id ?? "") : current,
       );
@@ -1612,6 +1642,7 @@ export function LibraryWorkspace() {
       if (lastBatchSession?.bookId === selectedBook.id) {
         clearLastBatchSession();
       }
+      clearBatchHistoryForBook(selectedBook.id);
       setNotice("已清空这本书的译文和翻译状态。");
       setError("");
     } catch {
@@ -1691,6 +1722,28 @@ export function LibraryWorkspace() {
         success: false as const,
       };
     }
+  }
+
+  function recordBatchHistoryEntry(
+    batchSession: TranslationBatchSession,
+    options: {
+      endedAt: string;
+      failedCount: number;
+      processedCount: number;
+      status: TranslationBatchSession["status"];
+      successCount: number;
+    },
+  ) {
+    addBatchHistoryEntry({
+      ...batchSession,
+      endedAt: options.endedAt,
+      failedCount: options.failedCount,
+      id: "",
+      processedCount: options.processedCount,
+      status: options.status,
+      successCount: options.successCount,
+      updatedAt: options.endedAt,
+    });
   }
 
   async function handleTranslateBook(options?: {
@@ -1829,10 +1882,19 @@ export function LibraryWorkspace() {
         }
       }
 
+      const completedAt = new Date().toISOString();
+
       setLastBatchSession({
         ...batchSession,
         status: "completed",
-        updatedAt: new Date().toISOString(),
+        updatedAt: completedAt,
+      });
+      recordBatchHistoryEntry(batchSession, {
+        endedAt: completedAt,
+        failedCount,
+        processedCount: successCount + failedCount,
+        status: "completed",
+        successCount,
       });
 
       setNotice(
@@ -1846,10 +1908,19 @@ export function LibraryWorkspace() {
       );
     } catch (translationError) {
       if (isAbortError(translationError)) {
+        const stoppedAt = new Date().toISOString();
+
         setLastBatchSession({
           ...batchSession,
           status: "stopped",
-          updatedAt: new Date().toISOString(),
+          updatedAt: stoppedAt,
+        });
+        recordBatchHistoryEntry(batchSession, {
+          endedAt: stoppedAt,
+          failedCount,
+          processedCount: successCount + failedCount,
+          status: "stopped",
+          successCount,
         });
         setNotice(
           queueKind === "failure-category"
@@ -1857,10 +1928,19 @@ export function LibraryWorkspace() {
             : "翻译已停止。再次开始会从未完成或失败的段落继续。",
         );
       } else {
+        const failedAt = new Date().toISOString();
+
         setLastBatchSession({
           ...batchSession,
           status: "failed",
-          updatedAt: new Date().toISOString(),
+          updatedAt: failedAt,
+        });
+        recordBatchHistoryEntry(batchSession, {
+          endedAt: failedAt,
+          failedCount,
+          processedCount: successCount + failedCount,
+          status: "failed",
+          successCount,
         });
         setError(getErrorMessage(translationError));
       }
@@ -2843,6 +2923,101 @@ export function LibraryWorkspace() {
                             当前已经没有可续跑段落了。你可以清除这条记录，或切换新的批量范围重新开始。
                           </p>
                         )}
+                      </div>
+                    ) : null}
+
+                    {currentBookBatchHistory.length > 0 ? (
+                      <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] p-4">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                              批量历史
+                            </p>
+                            <p className="mt-2 text-sm font-semibold text-[color:var(--foreground)]">
+                              当前这本书最近记录了 {currentBookBatchHistory.length} 次批量运行。
+                            </p>
+                            <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                              这里会保留整批翻译、失败分类重试和手动暂停的运行结果，方便你回看哪一轮真正推进了进度。
+                            </p>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => clearBatchHistoryForBook(selectedBook.id)}
+                            disabled={isTranslating}
+                            className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                          >
+                            清空本书历史
+                          </button>
+                        </div>
+
+                        <div className="mt-4 space-y-3">
+                          {visibleCurrentBookBatchHistory.map((entry) => (
+                            <div
+                              key={entry.id}
+                              className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4"
+                            >
+                              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                <div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span
+                                      className={cn(
+                                        "rounded-full px-3 py-1 text-[11px] font-semibold",
+                                        getBatchSessionStatusClassName(entry.status),
+                                      )}
+                                    >
+                                      {getBatchSessionStatusLabel(entry.status)}
+                                    </span>
+                                    <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
+                                      {entry.queueLabel?.trim() || "批量任务"}
+                                    </span>
+                                    <span className="rounded-full bg-stone-200 px-3 py-1 text-[11px] font-semibold text-stone-700">
+                                      队列 {entry.queueTotal} 段
+                                    </span>
+                                  </div>
+                                  <p className="mt-3 text-sm font-semibold text-[color:var(--foreground)]">
+                                    成功 {entry.successCount} 段，失败 {entry.failedCount} 段，
+                                    实际处理 {entry.processedCount} 段。
+                                  </p>
+                                  <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                                    开始于 {formatRelativeDate(entry.startedAt)}，结束于{" "}
+                                    {formatRelativeDate(entry.endedAt)}，总耗时{" "}
+                                    {formatDurationBetween(entry.startedAt, entry.endedAt)}。
+                                  </p>
+                                  <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                                    {entry.lastProcessedParagraphIndex !== null
+                                      ? `最后推进到第 ${
+                                          entry.lastProcessedParagraphIndex + 1
+                                        } 段。`
+                                      : "这一轮没有推进到具体段落。"}
+                                    {entry.errorCategory
+                                      ? ` 错误分类：${failedParagraphGroupByCategory.get(entry.errorCategory)?.label ?? entry.errorCategory}。`
+                                      : ""}
+                                  </p>
+                                </div>
+
+                                <div className="flex flex-wrap gap-2">
+                                  {entry.lastProcessedParagraphIndex !== null ? (
+                                    <Link
+                                      href={buildLibraryHref(selectedBook.id, {
+                                        paragraph: entry.lastProcessedParagraphIndex + 1,
+                                      })}
+                                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                                    >
+                                      定位结束位置
+                                    </Link>
+                                  ) : null}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {currentBookBatchHistory.length > visibleCurrentBookBatchHistory.length ? (
+                          <p className="mt-3 text-xs leading-6 text-[color:var(--muted)]">
+                            当前只展示最近 {visibleCurrentBookBatchHistory.length} 条记录；更早的记录仍保存在本地，直到被新的运行记录挤掉。
+                          </p>
+                        ) : null}
                       </div>
                     ) : null}
 
