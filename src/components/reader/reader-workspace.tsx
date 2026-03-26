@@ -1534,9 +1534,9 @@ export function ReaderWorkspace() {
     }
 
     const container = scrollContainerRef.current;
-    const threshold = container.scrollTop + container.clientHeight * 0.28;
-
-    let currentIndex = 0;
+    const containerRect = container.getBoundingClientRect();
+    const threshold = containerRect.top + container.clientHeight * 0.28;
+    let currentIndex = filteredParagraphs[0]?.index ?? 0;
 
     for (const paragraph of filteredParagraphs) {
       const element = paragraphRefs.current[paragraph.id];
@@ -1545,7 +1545,7 @@ export function ReaderWorkspace() {
         continue;
       }
 
-      if (element.offsetTop <= threshold) {
+      if (element.getBoundingClientRect().top <= threshold) {
         currentIndex = paragraph.index;
       } else {
         break;
