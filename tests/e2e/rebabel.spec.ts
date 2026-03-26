@@ -188,7 +188,7 @@ test("desktop workflow covers import, translation, notes, review checklist, and 
     })
     .click();
 
-  await expect(page.getByText(/翻译完成/)).toBeVisible();
+  await expect(page.getByText(/翻译完成：/)).toBeVisible();
   await expect(page.getByText("【测试译文】", { exact: false }).first()).toBeVisible();
   await attachScreenshot(page, testInfo, "desktop-library-translated");
 
