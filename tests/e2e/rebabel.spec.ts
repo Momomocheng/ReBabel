@@ -174,9 +174,13 @@ test("desktop workflow covers import, translation, notes, review checklist, and 
   await backupDownload.saveAs(backupPath);
 
   const backupPayload = JSON.parse(await fs.readFile(backupPath, "utf8")) as {
-    title?: string;
+    book?: {
+      title?: string;
+    };
+    type?: string;
   };
-  expect(backupPayload.title).toBe("Playwright Sample Book");
+  expect(backupPayload.type).toBe("rebabel-book");
+  expect(backupPayload.book?.title).toBe("Playwright Sample Book");
 
   await page
     .getByRole("button", {
