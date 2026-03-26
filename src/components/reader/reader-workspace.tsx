@@ -73,6 +73,7 @@ type ParagraphGlossaryMatch = {
 };
 
 type SearchNavigationDirection = "next" | "previous";
+type ReaderParagraphScope = "book" | "section";
 type ReaderParagraphFilter =
   | "all"
   | "bookmarked"
@@ -147,6 +148,19 @@ function parseReaderParagraphFilter(
     default:
       return "all";
   }
+}
+
+function isParagraphIndexInRange(
+  index: number,
+  range: { endParagraphIndex: number; startParagraphIndex: number } | null,
+) {
+  if (!range) {
+    return true;
+  }
+
+  return (
+    index >= range.startParagraphIndex && index <= range.endParagraphIndex
+  );
 }
 
 function parseParagraphIndexParam(rawValue: string | null) {
@@ -413,6 +427,8 @@ export function ReaderWorkspace() {
   const [jumpParagraphInput, setJumpParagraphInput] = useState("");
   const [paragraphFilter, setParagraphFilter] =
     useState<ReaderParagraphFilter>(paragraphFilterFromUrl);
+  const [paragraphScope, setParagraphScope] =
+    useState<ReaderParagraphScope>("book");
   const [searchInput, setSearchInput] = useState(searchQueryFromUrl);
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -455,6 +471,26 @@ export function ReaderWorkspace() {
     [activeParagraphIndex, selectedBook],
   );
   const activeSection = selectedBook?.sections[activeSectionIndex] ?? null;
+  const activeSectionRange = useMemo(
+    () =>
+      selectedBook
+        ? getSectionParagraphRange(
+            selectedBook.sections,
+            activeSectionIndex,
+            selectedBook.paragraphs.length,
+          )
+        : null,
+    [activeSectionIndex, selectedBook],
+  );
+  const activeSectionParagraphs = useMemo(() => {
+    if (!selectedBook || !activeSectionRange) {
+      return [] as BookRecord["paragraphs"];
+    }
+
+    return selectedBook.paragraphs.filter((paragraph) =>
+      isParagraphIndexInRange(paragraph.index, activeSectionRange),
+    );
+  }, [activeSectionRange, selectedBook]);
   const bookmarksByParagraphIndex = useMemo(
     () =>
       new Map(
@@ -469,36 +505,76 @@ export function ReaderWorkspace() {
   const bookmarkedCount = selectedBook?.bookmarks.length ?? 0;
   const baseParagraphFilterCounts = useMemo(
     () => ({
-      all: selectedBook?.paragraphs.length ?? 0,
-      bookmarked: selectedBook?.bookmarks.length ?? 0,
+      all:
+        paragraphScope === "section"
+          ? activeSectionParagraphs.length
+          : selectedBook?.paragraphs.length ?? 0,
+      bookmarked:
+        paragraphScope === "section"
+          ? activeSectionParagraphs.filter((paragraph) =>
+              bookmarksByParagraphIndex.has(paragraph.index),
+            ).length
+          : selectedBook?.bookmarks.length ?? 0,
       failed:
-        selectedBook?.paragraphs.filter(
+        (paragraphScope === "section" ? activeSectionParagraphs : selectedBook?.paragraphs ?? []).filter(
           (paragraph) => paragraph.translationStatus === "error",
-        ).length ?? 0,
+        ).length,
       "needs-review":
-        selectedBook?.paragraphs.filter(
+        (paragraphScope === "section" ? activeSectionParagraphs : selectedBook?.paragraphs ?? []).filter(
           (paragraph) => paragraph.translationStatus !== "done",
-        ).length ?? 0,
+        ).length,
       "needs-revision":
-        selectedBook?.paragraphs.filter(
+        (paragraphScope === "section" ? activeSectionParagraphs : selectedBook?.paragraphs ?? []).filter(
           (paragraph) =>
             paragraph.translationStatus === "done" &&
             paragraph.reviewStatus === "needs-revision",
-        ).length ?? 0,
+        ).length,
       reviewed:
-        selectedBook?.paragraphs.filter(
+        (paragraphScope === "section" ? activeSectionParagraphs : selectedBook?.paragraphs ?? []).filter(
           (paragraph) =>
             paragraph.translationStatus === "done" &&
             paragraph.reviewStatus === "reviewed",
-        ).length ?? 0,
+        ).length,
       "unreviewed-translated":
-        selectedBook?.paragraphs.filter(
+        (paragraphScope === "section" ? activeSectionParagraphs : selectedBook?.paragraphs ?? []).filter(
           (paragraph) =>
             paragraph.translationStatus === "done" &&
             paragraph.reviewStatus === "unreviewed",
-        ).length ?? 0,
+        ).length,
     }),
-    [selectedBook],
+    [
+      activeSectionParagraphs,
+      bookmarksByParagraphIndex,
+      paragraphScope,
+      selectedBook,
+    ],
+  );
+  const activeSectionFilterCounts = useMemo(
+    () => ({
+      all: activeSectionParagraphs.length,
+      failed: activeSectionParagraphs.filter(
+        (paragraph) => paragraph.translationStatus === "error",
+      ).length,
+      "needs-review": activeSectionParagraphs.filter(
+        (paragraph) => paragraph.translationStatus !== "done",
+      ).length,
+      "needs-revision": activeSectionParagraphs.filter(
+        (paragraph) =>
+          paragraph.translationStatus === "done" &&
+          paragraph.reviewStatus === "needs-revision",
+      ).length,
+      reviewed: activeSectionParagraphs.filter(
+        (paragraph) =>
+          paragraph.translationStatus === "done" &&
+          paragraph.reviewStatus === "reviewed",
+      ).length,
+      "unreviewed-translated": activeSectionParagraphs.filter(
+        (paragraph) =>
+          paragraph.translationStatus === "done" &&
+          paragraph.reviewStatus === "unreviewed",
+      ).length,
+    }),
+    [activeSectionParagraphs],
   );
   const bookmarksWithNotesCount = useMemo(
     () =>
@@ -672,7 +748,10 @@ export function ReaderWorkspace() {
       return [] as BookRecord["paragraphs"];
     }
 
-    return selectedBook.paragraphs.filter((paragraph) =>
+    const scopedParagraphs =
+      paragraphScope === "section" ? activeSectionParagraphs : selectedBook.paragraphs;
+
+    return scopedParagraphs.filter((paragraph) =>
       matchesReaderParagraphFilter({
         filter: paragraphFilter,
         isSearchHit: searchHitParagraphIndexes.has(paragraph.index),
@@ -682,8 +761,10 @@ export function ReaderWorkspace() {
       }),
     );
   }, [
+    activeSectionParagraphs,
     bookmarksByParagraphIndex,
     paragraphFilter,
+    paragraphScope,
     searchHitParagraphIndexes,
     selectedBook,
   ]);
@@ -985,6 +1066,7 @@ export function ReaderWorkspace() {
       return;
     }
 
+    setParagraphScope("book");
     replaceReaderLocation({
       bookId,
       filter: paragraphFilter,
@@ -1103,7 +1185,7 @@ export function ReaderWorkspace() {
 
     if (
       options?.revealHiddenParagraph &&
-      paragraphFilter !== "all" &&
+      (paragraphFilter !== "all" || paragraphScope === "section") &&
       !filteredParagraphIndexSet.has(nextParagraphIndex)
     ) {
       pendingParagraphNavigationRef.current = {
@@ -1112,12 +1194,13 @@ export function ReaderWorkspace() {
         syncUrl: options?.syncUrl !== false,
       };
       setParagraphFilter("all");
+      setParagraphScope("book");
       setError("");
 
       if (options?.hiddenParagraphNotice !== null) {
         setNotice(
           options?.hiddenParagraphNotice ??
-            "当前过滤隐藏了目标段落，已切回全部段落。",
+            "当前过滤或章节范围隐藏了目标段落，已切回全书全部段落。",
         );
       }
 
@@ -1432,6 +1515,42 @@ export function ReaderWorkspace() {
     setError("");
   }
 
+  function handleParagraphScopeChange(nextScope: ReaderParagraphScope) {
+    setParagraphScope(nextScope);
+    setError("");
+    setNotice(
+      nextScope === "section"
+        ? `已切到当前章节「${activeSection?.title ?? "全文"}」范围。`
+        : "已切回全书范围。",
+    );
+  }
+
+  function handleApplyCurrentSectionReviewShortcut(
+    nextFilter:
+      | "all"
+      | "needs-revision"
+      | "reviewed"
+      | "unreviewed-translated",
+  ) {
+    setParagraphScope("section");
+    setParagraphFilter(nextFilter);
+    replaceReaderLocation({
+      filter: nextFilter === "all" ? null : nextFilter,
+      paragraph: activeParagraphIndex + 1,
+      query: searchInput.trim() || null,
+    });
+    setError("");
+    setNotice(
+      nextFilter === "all"
+        ? `已只显示当前章节「${activeSection?.title ?? "全文"}」的全部段落。`
+        : `已切到当前章节「${activeSection?.title ?? "全文"}」的「${
+            READER_PARAGRAPH_FILTER_OPTIONS.find(
+              (option) => option.value === nextFilter,
+            )?.label ?? nextFilter
+          }」视图。`,
+    );
+  }
+
   return (
     <div className="grid gap-8 xl:grid-cols-[0.34fr_0.66fr]">
       <section className="rounded-[34px] border border-[color:var(--line)] bg-[color:var(--panel-strong)]/90 p-7 shadow-[var(--shadow)] backdrop-blur-xl">
@@ -1620,19 +1739,106 @@ export function ReaderWorkspace() {
                           当前章节：{activeSection?.title ?? "全文"} · 共{" "}
                           {selectedBook.sections.length} 节
                         </p>
+                        {activeSectionRange ? (
+                          <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                            本章节范围：第 {activeSectionRange.startParagraphIndex + 1} 段 - 第{" "}
+                            {activeSectionRange.endParagraphIndex + 1} 段
+                          </p>
+                        ) : null}
                       </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            goToParagraph(selectedBook.readingProgress.lastReadParagraphIndex, {
+                              hiddenParagraphNotice:
+                                "当前过滤或章节范围隐藏了上次阅读位置，已切回全书全部段落。",
+                              revealHiddenParagraph: true,
+                            })
+                          }
+                          className="rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                        >
+                          回到上次位置
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleParagraphScopeChange("book")}
+                          disabled={paragraphScope === "book"}
+                          className="rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                        >
+                          全书范围
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleParagraphScopeChange("section")}
+                          disabled={paragraphScope === "section"}
+                          className="rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                        >
+                          只看当前章节
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 md:grid-cols-3">
+                      <ReaderMetric
+                        label="本章节待复查"
+                        value={String(activeSectionFilterCounts["unreviewed-translated"])}
+                        hint="translated"
+                      />
+                      <ReaderMetric
+                        label="本章节待修订"
+                        value={String(activeSectionFilterCounts["needs-revision"])}
+                        hint="needs revision"
+                      />
+                      <ReaderMetric
+                        label="本章节已复核"
+                        value={String(activeSectionFilterCounts.reviewed)}
+                        hint="reviewed"
+                      />
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={() =>
-                          goToParagraph(selectedBook.readingProgress.lastReadParagraphIndex, {
-                            hiddenParagraphNotice:
-                              "当前过滤隐藏了上次阅读位置，已切回全部段落。",
-                            revealHiddenParagraph: true,
-                          })
-                        }
+                        onClick={() => handleApplyCurrentSectionReviewShortcut("all")}
                         className="rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
                       >
-                        回到上次位置
+                        当前章节全部段落 ({activeSectionFilterCounts.all})
+                      </button>
+                      <button
+                        type="button"
+                        disabled={
+                          activeSectionFilterCounts["unreviewed-translated"] === 0
+                        }
+                        onClick={() =>
+                          handleApplyCurrentSectionReviewShortcut(
+                            "unreviewed-translated",
+                          )
+                        }
+                        className="rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                      >
+                        当前章节待复查 (
+                        {activeSectionFilterCounts["unreviewed-translated"]})
+                      </button>
+                      <button
+                        type="button"
+                        disabled={activeSectionFilterCounts["needs-revision"] === 0}
+                        onClick={() =>
+                          handleApplyCurrentSectionReviewShortcut("needs-revision")
+                        }
+                        className="rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                      >
+                        当前章节待修订 ({activeSectionFilterCounts["needs-revision"]})
+                      </button>
+                      <button
+                        type="button"
+                        disabled={activeSectionFilterCounts.reviewed === 0}
+                        onClick={() =>
+                          handleApplyCurrentSectionReviewShortcut("reviewed")
+                        }
+                        className="rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                      >
+                        当前章节已复核 ({activeSectionFilterCounts.reviewed})
                       </button>
                     </div>
 
@@ -1651,7 +1857,7 @@ export function ReaderWorkspace() {
                             onClick={() =>
                               goToParagraph(section.startParagraphIndex, {
                                 hiddenParagraphNotice:
-                                  "当前过滤隐藏了该章节起点，已切回全部段落。",
+                                  "当前过滤或章节范围隐藏了该章节起点，已切回全书全部段落。",
                                 revealHiddenParagraph: true,
                               })
                             }
@@ -2200,11 +2406,30 @@ export function ReaderWorkspace() {
                   <div>
                     <p className="text-sm font-semibold">阅读过滤</p>
                     <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
-                      当前显示 {filteredParagraphs.length}/{selectedBook.paragraphs.length} 段。
+                      当前显示 {filteredParagraphs.length}/
+                      {paragraphScope === "section"
+                        ? activeSectionParagraphs.length
+                        : selectedBook.paragraphs.length} 段。
                       {paragraphFilter === "all"
-                        ? " 全量视图适合通读。"
+                        ? paragraphScope === "section"
+                          ? " 已限制为当前章节视图。"
+                          : " 全量视图适合通读。"
                         : ` 已切换到「${selectedParagraphFilterOption.label}」视图。`}
                     </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={cn(
+                        "rounded-full px-3 py-1 text-xs font-semibold",
+                        paragraphScope === "section"
+                          ? "bg-[color:var(--accent-soft)] text-[color:var(--accent-strong)]"
+                          : "bg-white text-[color:var(--muted)]",
+                      )}
+                    >
+                      {paragraphScope === "section"
+                        ? `当前章节 · ${activeSection?.title ?? "全文"}`
+                        : "全书范围"}
+                    </span>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {visibleParagraphFilterOptions.map((option) => {
@@ -2240,7 +2465,9 @@ export function ReaderWorkspace() {
                   <div className="rounded-[24px] border border-dashed border-[color:var(--line)] bg-white/70 px-4 py-8 text-sm leading-6 text-[color:var(--muted)]">
                     {paragraphFilter === "search-results"
                       ? "当前搜索还没有命中任何段落。可以换一个关键词，或切回“全部段落”继续阅读。"
-                      : "当前过滤条件下没有可显示的段落。可以切回“全部段落”，或者换一本到有对应内容的书继续看。"}
+                      : paragraphScope === "section"
+                        ? "当前章节范围内没有符合条件的段落。可以切回全书，或者改看本章节的其他过滤视图。"
+                        : "当前过滤条件下没有可显示的段落。可以切回“全部段落”，或者换一本到有对应内容的书继续看。"}
                   </div>
                 ) : (
                   <div className="space-y-4">
