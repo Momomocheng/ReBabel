@@ -272,6 +272,46 @@ function buildLibraryHref(
   return `/library?${params.toString()}`;
 }
 
+function buildReaderHref(
+  bookId: string,
+  options?: {
+    filter?:
+      | "needs-revision"
+      | "reviewed"
+      | "search-results"
+      | "unreviewed-translated"
+      | null;
+    paragraph?: number | null;
+  },
+) {
+  const params = new URLSearchParams();
+
+  params.set("book", bookId);
+
+  if (options?.paragraph && options.paragraph > 0) {
+    params.set("p", String(Math.floor(options.paragraph)));
+  }
+
+  if (options?.filter) {
+    params.set("filter", options.filter);
+  }
+
+  return `/reader?${params.toString()}`;
+}
+
+function getReaderReviewFilterForParagraph(
+  paragraph: BookRecord["paragraphs"][number],
+) {
+  switch (paragraph.reviewStatus) {
+    case "needs-revision":
+      return "needs-revision" as const;
+    case "reviewed":
+      return "reviewed" as const;
+    default:
+      return "unreviewed-translated" as const;
+  }
+}
+
 function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError";
 }
@@ -3469,7 +3509,9 @@ export function LibraryWorkspace() {
                           <Link
                             href={
                               selectedBook
-                                ? `/reader?book=${encodeURIComponent(selectedBook.id)}`
+                                ? buildReaderHref(selectedBook.id, {
+                                    filter: "unreviewed-translated",
+                                  })
                                 : "/reader"
                             }
                             className="inline-flex items-center justify-center gap-2 rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
@@ -3583,9 +3625,14 @@ export function LibraryWorkspace() {
                                         定位本段
                                       </Link>
                                       <Link
-                                        href={`/reader?book=${encodeURIComponent(selectedBook.id)}&p=${
-                                          candidate.paragraphIndex + 1
-                                        }`}
+                                        href={buildReaderHref(selectedBook.id, {
+                                          filter: candidateParagraph
+                                            ? getReaderReviewFilterForParagraph(
+                                                candidateParagraph,
+                                              )
+                                            : "unreviewed-translated",
+                                          paragraph: candidate.paragraphIndex + 1,
+                                        })}
                                         className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
                                       >
                                         阅读器复查
@@ -4033,9 +4080,10 @@ export function LibraryWorkspace() {
                     <Link
                       href={
                         selectedBook
-                          ? `/reader?book=${encodeURIComponent(selectedBook.id)}&p=${
-                              selectedBook.readingProgress.lastReadParagraphIndex + 1
-                            }`
+                          ? buildReaderHref(selectedBook.id, {
+                              paragraph:
+                                selectedBook.readingProgress.lastReadParagraphIndex + 1,
+                            })
                           : "/reader"
                       }
                       className="inline-flex items-center justify-center gap-2 rounded-full border border-[color:var(--line)] bg-white px-5 py-3 text-sm font-semibold transition hover:bg-stone-50"
@@ -4158,9 +4206,9 @@ export function LibraryWorkspace() {
                       ) : null}
 
                       <Link
-                        href={`/reader?book=${encodeURIComponent(selectedBook.id)}&p=${
-                          targetedParagraph.index + 1
-                        }`}
+                        href={buildReaderHref(selectedBook.id, {
+                          paragraph: targetedParagraph.index + 1,
+                        })}
                         className="inline-flex items-center justify-center gap-2 rounded-full border border-[color:var(--line)] bg-white px-4 py-3 text-sm font-semibold transition hover:bg-stone-50"
                       >
                         <PanelsTopLeft className="h-4 w-4" />

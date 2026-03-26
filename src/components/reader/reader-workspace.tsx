@@ -132,6 +132,23 @@ function normalizeSearchQuery(query: string) {
   return query.trim().toLocaleLowerCase();
 }
 
+function parseReaderParagraphFilter(
+  rawValue: string | null | undefined,
+): ReaderParagraphFilter {
+  switch (rawValue) {
+    case "bookmarked":
+    case "failed":
+    case "needs-review":
+    case "needs-revision":
+    case "reviewed":
+    case "search-results":
+    case "unreviewed-translated":
+      return rawValue;
+    default:
+      return "all";
+  }
+}
+
 function parseParagraphIndexParam(rawValue: string | null) {
   if (!rawValue) {
     return null;
@@ -276,6 +293,7 @@ function resolveSearchNavigationIndex(
 function buildReaderHref(
   bookId: string,
   options?: {
+    filter?: ReaderParagraphFilter | null;
     paragraph?: number | null;
     query?: string | null;
   },
@@ -292,6 +310,14 @@ function buildReaderHref(
 
   if (normalizedQuery) {
     params.set("q", normalizedQuery);
+  }
+
+  if (
+    options?.filter &&
+    options.filter !== "all" &&
+    (options.filter !== "search-results" || Boolean(normalizedQuery))
+  ) {
+    params.set("filter", options.filter);
   }
 
   return `/reader?${params.toString()}`;
@@ -372,6 +398,9 @@ export function ReaderWorkspace() {
   const selectedBookIdFromUrl = searchParams.get("book") ?? "";
   const paragraphIndexFromUrl = parseParagraphIndexParam(searchParams.get("p"));
   const searchQueryFromUrl = searchParams.get("q") ?? "";
+  const paragraphFilterFromUrl = parseReaderParagraphFilter(
+    searchParams.get("filter"),
+  );
 
   const [books, setBooks] = useState<BookRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -383,7 +412,7 @@ export function ReaderWorkspace() {
   const [isGlossaryHighlightEnabled, setIsGlossaryHighlightEnabled] = useState(true);
   const [jumpParagraphInput, setJumpParagraphInput] = useState("");
   const [paragraphFilter, setParagraphFilter] =
-    useState<ReaderParagraphFilter>("all");
+    useState<ReaderParagraphFilter>(paragraphFilterFromUrl);
   const [searchInput, setSearchInput] = useState(searchQueryFromUrl);
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -822,10 +851,13 @@ export function ReaderWorkspace() {
   }, [searchQueryFromUrl]);
 
   useEffect(() => {
-    if (paragraphFilter === "search-results" && !normalizedSearchQuery) {
+    if (paragraphFilterFromUrl === "search-results" && !normalizedSearchQuery) {
       setParagraphFilter("all");
+      return;
     }
-  }, [normalizedSearchQuery, paragraphFilter]);
+
+    setParagraphFilter(paragraphFilterFromUrl);
+  }, [normalizedSearchQuery, paragraphFilterFromUrl]);
 
   useEffect(() => {
     setBookmarkNoteInput(currentBookmark?.note ?? "");
@@ -917,6 +949,7 @@ export function ReaderWorkspace() {
 
   function replaceReaderLocation(options?: {
     bookId?: string;
+    filter?: ReaderParagraphFilter | null;
     paragraph?: number | null;
     query?: string | null;
   }) {
@@ -928,14 +961,18 @@ export function ReaderWorkspace() {
 
     router.replace(
       buildReaderHref(bookId, {
+        filter:
+          options?.filter === undefined
+            ? paragraphFilter
+            : options.filter,
         paragraph:
           options?.paragraph === undefined
             ? paragraphIndexFromUrl !== null
               ? paragraphIndexFromUrl + 1
-              : null
+              : activeParagraphIndex + 1
             : options.paragraph,
         query:
-          options?.query === undefined ? searchQueryFromUrl || null : options.query,
+          options?.query === undefined ? searchInput.trim() || null : options.query,
       }),
       {
         scroll: false,
@@ -950,6 +987,7 @@ export function ReaderWorkspace() {
 
     replaceReaderLocation({
       bookId,
+      filter: paragraphFilter,
       paragraph: null,
       query: searchInput.trim() || null,
     });
@@ -1163,8 +1201,11 @@ export function ReaderWorkspace() {
     event.preventDefault();
 
     const trimmedQuery = searchInput.trim();
+    const nextFilter =
+      paragraphFilter === "search-results" && !trimmedQuery ? null : paragraphFilter;
 
     replaceReaderLocation({
+      filter: nextFilter,
       paragraph: null,
       query: trimmedQuery || null,
     });
@@ -1184,7 +1225,14 @@ export function ReaderWorkspace() {
 
   function handleClearSearch() {
     setSearchInput("");
+    const shouldResetFilter = paragraphFilter === "search-results";
+
+    if (shouldResetFilter) {
+      setParagraphFilter("all");
+    }
+
     replaceReaderLocation({
+      filter: shouldResetFilter ? null : paragraphFilter,
       paragraph: null,
       query: null,
     });
@@ -1233,6 +1281,13 @@ export function ReaderWorkspace() {
 
       if (normalizedQuery) {
         shareUrl.searchParams.set("q", normalizedQuery);
+      }
+
+      if (
+        paragraphFilter !== "all" &&
+        (paragraphFilter !== "search-results" || Boolean(normalizedQuery))
+      ) {
+        shareUrl.searchParams.set("filter", paragraphFilter);
       }
 
       await navigator.clipboard.writeText(shareUrl.toString());
@@ -1365,6 +1420,16 @@ export function ReaderWorkspace() {
 
   function setParagraphRef(paragraphId: string, element: HTMLElement | null) {
     paragraphRefs.current[paragraphId] = element;
+  }
+
+  function handleParagraphFilterChange(nextFilter: ReaderParagraphFilter) {
+    setParagraphFilter(nextFilter);
+    replaceReaderLocation({
+      filter: nextFilter === "all" ? null : nextFilter,
+      paragraph: activeParagraphIndex + 1,
+      query: searchInput.trim() || null,
+    });
+    setError("");
   }
 
   return (
@@ -2150,7 +2215,7 @@ export function ReaderWorkspace() {
                           key={option.value}
                           type="button"
                           disabled={option.value !== "all" && optionCount === 0}
-                          onClick={() => setParagraphFilter(option.value)}
+                          onClick={() => handleParagraphFilterChange(option.value)}
                           className={cn(
                             "rounded-full border px-4 py-2 text-sm font-semibold transition",
                             paragraphFilter === option.value
