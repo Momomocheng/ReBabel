@@ -86,6 +86,7 @@ import {
   buildTranslationPreflightIssues,
   type TranslationPreflightIssue,
 } from "@/lib/translation/preflight";
+import { buildTranslationReviewSample } from "@/lib/translation/review-sampling";
 import {
   DEFAULT_TRANSLATION_BATCH_SCOPE,
   DEFAULT_TRANSLATION_CONTEXT_SIZE,
@@ -510,6 +511,16 @@ function formatDurationBetween(startedAt: string, endedAt: string) {
   return formatDuration(durationMs);
 }
 
+function buildTextSnippet(text: string, limit = 140) {
+  const normalizedText = text.replace(/\s+/g, " ").trim();
+
+  if (normalizedText.length <= limit) {
+    return normalizedText;
+  }
+
+  return `${normalizedText.slice(0, limit).trimEnd()}...`;
+}
+
 function buildParagraphRangeSummary(indexes: number[]) {
   if (indexes.length === 0) {
     return "";
@@ -875,6 +886,20 @@ export function LibraryWorkspace() {
   const visibleCurrentBookBatchHistory = useMemo(
     () => currentBookBatchHistory.slice(0, 6),
     [currentBookBatchHistory],
+  );
+  const translationReviewSample = useMemo(
+    () =>
+      selectedBook
+        ? buildTranslationReviewSample(selectedBook, {
+            coverageCount: 2,
+            limit: 6,
+          })
+        : {
+            candidates: [],
+            highRiskCandidateCount: 0,
+            reviewedParagraphCount: 0,
+          },
+    [selectedBook],
   );
   const importDraftParagraphs = useMemo(
     () => (importDraft ? normalizeImportDraftParagraphs(importDraft.paragraphs) : []),
@@ -3312,6 +3337,147 @@ export function LibraryWorkspace() {
                             );
                           })}
                         </div>
+                      </div>
+                    ) : null}
+
+                    {translationReviewSample.reviewedParagraphCount > 0 ? (
+                      <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] p-4">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                              抽样质检
+                            </p>
+                            <p className="mt-2 text-sm font-semibold text-[color:var(--foreground)]">
+                              已从 {translationReviewSample.reviewedParagraphCount} 段已完成译文里抽出{" "}
+                              {translationReviewSample.candidates.length} 段优先复查样本。
+                            </p>
+                            <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                              其中有 {translationReviewSample.highRiskCandidateCount} 段被规则判定为高风险；
+                              其余样本用于覆盖性抽查，避免只盯着失败段落而漏掉已经落地但质量可疑的译文。
+                            </p>
+                          </div>
+
+                          <Link
+                            href={
+                              selectedBook
+                                ? `/reader?book=${encodeURIComponent(selectedBook.id)}`
+                                : "/reader"
+                            }
+                            className="inline-flex items-center justify-center gap-2 rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                          >
+                            <PanelsTopLeft className="h-4 w-4" />
+                            去阅读器复查
+                          </Link>
+                        </div>
+
+                        <div className="mt-4 space-y-3">
+                          {translationReviewSample.candidates.map((candidate) => {
+                            const candidateSectionIndex = getSectionIndexForParagraph(
+                              selectedBook.sections,
+                              candidate.paragraphIndex,
+                            );
+                            const candidateSectionTitle =
+                              selectedBook.sections[candidateSectionIndex]?.title ?? "全文";
+
+                            return (
+                              <div
+                                key={`review-sample-${candidate.paragraphIndex}`}
+                                className="rounded-[18px] border border-[color:var(--line)] bg-white/85 p-4"
+                              >
+                                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span
+                                        className={cn(
+                                          "rounded-full px-3 py-1 text-[11px] font-semibold",
+                                          candidate.sampleKind === "high-risk"
+                                            ? "bg-red-100 text-red-700"
+                                            : "bg-stone-200 text-stone-700",
+                                        )}
+                                      >
+                                        {candidate.sampleKind === "high-risk"
+                                          ? "高风险样本"
+                                          : "覆盖抽样"}
+                                      </span>
+                                      <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
+                                        第 {candidate.paragraphIndex + 1} 段
+                                      </span>
+                                      <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]">
+                                        {candidateSectionTitle}
+                                      </span>
+                                      {candidate.score > 0 ? (
+                                        <span className="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-semibold text-amber-800">
+                                          风险分 {candidate.score}
+                                        </span>
+                                      ) : null}
+                                    </div>
+
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      {candidate.reasons.map((reason) => (
+                                        <span
+                                          key={`${candidate.paragraphIndex}-${reason.code}`}
+                                          className="rounded-full bg-[color:var(--panel)] px-3 py-1 text-[11px] font-semibold text-[color:var(--muted)]"
+                                        >
+                                          {reason.label}
+                                        </span>
+                                      ))}
+                                    </div>
+
+                                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                                      <div className="rounded-[16px] border border-[color:var(--line)] bg-[color:var(--panel)] p-3">
+                                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                                          English
+                                        </p>
+                                        <p className="mt-2 text-sm leading-6 text-[color:var(--foreground)]">
+                                          {buildTextSnippet(candidate.sourceText)}
+                                        </p>
+                                      </div>
+                                      <div className="rounded-[16px] border border-[color:var(--line)] bg-[color:var(--panel-strong)] p-3">
+                                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                                          Chinese
+                                        </p>
+                                        <p className="mt-2 text-sm leading-6 text-[color:var(--foreground)]">
+                                          {buildTextSnippet(candidate.translatedText)}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex flex-wrap gap-2">
+                                    <Link
+                                      href={buildLibraryHref(selectedBook.id, {
+                                        paragraph: candidate.paragraphIndex + 1,
+                                      })}
+                                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                                    >
+                                      定位本段
+                                    </Link>
+                                    <Link
+                                      href={`/reader?book=${encodeURIComponent(selectedBook.id)}&p=${
+                                        candidate.paragraphIndex + 1
+                                      }`}
+                                      className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                                    >
+                                      阅读器复查
+                                    </Link>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : translationStats.translatedCount > 0 ? (
+                      <div className="mt-4 rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] p-4">
+                        <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                          抽样质检
+                        </p>
+                        <p className="mt-2 text-sm font-semibold text-[color:var(--foreground)]">
+                          当前没有抽到明显值得优先复查的高风险样本。
+                        </p>
+                        <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                          这通常表示已完成译文没有命中明显异常规则。你仍然可以去阅读器按章节顺序抽查，重点看长段、对话和术语密集段。
+                        </p>
                       </div>
                     ) : null}
                   </div>
