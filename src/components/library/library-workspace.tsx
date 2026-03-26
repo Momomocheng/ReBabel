@@ -83,6 +83,10 @@ import {
   type TranslationErrorCategory,
 } from "@/lib/translation/error-classification";
 import {
+  buildTranslationPreflightIssues,
+  type TranslationPreflightIssue,
+} from "@/lib/translation/preflight";
+import {
   DEFAULT_TRANSLATION_BATCH_SCOPE,
   DEFAULT_TRANSLATION_CONTEXT_SIZE,
   MAX_TRANSLATION_CONTEXT_SIZE,
@@ -270,6 +274,12 @@ type FailedParagraphGroup = {
   paragraphIndexes: number[];
   requiresSettingsChange: boolean;
   retryable: boolean;
+};
+
+type PreflightSummary = {
+  blocking: TranslationPreflightIssue[];
+  info: TranslationPreflightIssue[];
+  warnings: TranslationPreflightIssue[];
 };
 
 const BATCH_SCOPE_OPTIONS: Array<{
@@ -930,6 +940,44 @@ export function LibraryWorkspace() {
     () => normalizeTranslationRequestDelayMs(requestDelayMs),
     [requestDelayMs],
   );
+  const translationPreflightIssues = useMemo(
+    () =>
+      buildTranslationPreflightIssues({
+        apiKey,
+        baseUrl,
+        batchScope: normalizedBatchScope,
+        contextSize: normalizedContextSize,
+        failedCategories: failedParagraphGroups.map((group) => ({
+          category: group.category,
+          count: group.count,
+        })),
+        model,
+        requestDelayMs: normalizedRequestDelayMs,
+      }),
+    [
+      apiKey,
+      baseUrl,
+      failedParagraphGroups,
+      model,
+      normalizedBatchScope,
+      normalizedContextSize,
+      normalizedRequestDelayMs,
+    ],
+  );
+  const translationPreflightSummary = useMemo<PreflightSummary>(
+    () => ({
+      blocking: translationPreflightIssues.filter(
+        (issue) => issue.level === "blocking",
+      ),
+      info: translationPreflightIssues.filter((issue) => issue.level === "info"),
+      warnings: translationPreflightIssues.filter(
+        (issue) => issue.level === "warning",
+      ),
+    }),
+    [translationPreflightIssues],
+  );
+  const primaryBlockingPreflightIssue =
+    translationPreflightSummary.blocking[0] ?? null;
   const normalizedTextExportScope = useMemo(
     () => normalizeBookTextExportScope(textExportScope),
     [textExportScope],
@@ -1151,6 +1199,8 @@ export function LibraryWorkspace() {
 
   const hasTranslationConfig =
     settingsHydrated && Boolean(baseUrl && model && apiKey);
+  const canRunTranslation =
+    hasTranslationConfig && translationPreflightSummary.blocking.length === 0;
 
   const refreshBooks = useCallback(async () => {
     setIsLoading(true);
@@ -1764,6 +1814,11 @@ export function LibraryWorkspace() {
       return;
     }
 
+    if (translationPreflightSummary.blocking.length > 0) {
+      setError(primaryBlockingPreflightIssue?.description || "当前配置未通过翻译前预检。");
+      return;
+    }
+
     const batchScopeSnapshot = options?.scopeOverride ?? normalizedBatchScope;
     const queueKind = options?.queueKind ?? "scope";
     const requestDelayMsSnapshot = normalizedRequestDelayMs;
@@ -1959,6 +2014,11 @@ export function LibraryWorkspace() {
 
     if (!hasTranslationConfig) {
       setError("请先完成 API Key、Base URL 和模型配置。");
+      return;
+    }
+
+    if (translationPreflightSummary.blocking.length > 0) {
+      setError(primaryBlockingPreflightIssue?.description || "当前配置未通过翻译前预检。");
       return;
     }
 
@@ -2672,10 +2732,115 @@ export function LibraryWorkspace() {
                   </div>
 
                   <p className="mt-3 text-sm leading-6 text-[color:var(--muted)]">
-                    {hasTranslationConfig
-                      ? "当前可以直接从浏览器发起翻译请求。若服务商阻止跨域访问，需要换成支持前端直连的兼容端点。"
-                      : "当前还不能翻译。请先在设置页填写 Base URL、模型名和 API Key。"}
+                    {!hasTranslationConfig
+                      ? "当前还不能翻译。请先在设置页填写 Base URL、模型名和 API Key。"
+                      : translationPreflightSummary.blocking.length > 0
+                        ? "当前配置里还有明显会失败的风险项。先处理下面的预检问题，再开始发请求。"
+                        : "当前可以直接从浏览器发起翻译请求。若服务商阻止跨域访问，需要换成支持前端直连的兼容端点。"}
                   </p>
+
+                  <div className="mt-4 rounded-[20px] border border-[color:var(--line)] bg-white/80 p-4">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold">翻译前预检</p>
+                        <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                          在真正发请求前，先把明显的配置错误和高风险状态揪出来，避免整批跑到一半才发现问题。
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <span className="rounded-full bg-red-100 px-3 py-2 text-xs font-semibold text-red-700">
+                          阻断 {translationPreflightSummary.blocking.length}
+                        </span>
+                        <span className="rounded-full bg-amber-100 px-3 py-2 text-xs font-semibold text-amber-800">
+                          警告 {translationPreflightSummary.warnings.length}
+                        </span>
+                        <span className="rounded-full bg-stone-200 px-3 py-2 text-xs font-semibold text-stone-700">
+                          提示 {translationPreflightSummary.info.length}
+                        </span>
+                      </div>
+                    </div>
+
+                    {translationPreflightIssues.length === 0 ? (
+                      <div className="mt-4 rounded-[18px] border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm leading-6 text-emerald-900">
+                        当前没有发现明显的翻译前风险，可以直接开始批量或单段翻译。
+                      </div>
+                    ) : (
+                      <div className="mt-4 space-y-3">
+                        {translationPreflightIssues.map((issue) => (
+                          <div
+                            key={issue.code}
+                            className={cn(
+                              "rounded-[18px] border px-4 py-4",
+                              issue.level === "blocking"
+                                ? "border-red-200 bg-red-50"
+                                : issue.level === "warning"
+                                  ? "border-amber-200 bg-amber-50"
+                                  : "border-stone-200 bg-stone-50",
+                            )}
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={cn(
+                                  "rounded-full px-3 py-1 text-[11px] font-semibold",
+                                  issue.level === "blocking"
+                                    ? "bg-red-100 text-red-700"
+                                    : issue.level === "warning"
+                                      ? "bg-amber-100 text-amber-800"
+                                      : "bg-stone-200 text-stone-700",
+                                )}
+                              >
+                                {issue.level === "blocking"
+                                  ? "阻断"
+                                  : issue.level === "warning"
+                                    ? "警告"
+                                    : "提示"}
+                              </span>
+                              <span className="text-sm font-semibold text-[color:var(--foreground)]">
+                                {issue.title}
+                              </span>
+                            </div>
+                            <p className="mt-2 text-xs leading-6 text-[color:var(--muted)]">
+                              {issue.description}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Link
+                        href="/settings"
+                        className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                      >
+                        去设置页检查配置
+                      </Link>
+                      {translationPreflightSummary.warnings.some(
+                        (issue) => issue.code === "rate-limit-with-zero-delay",
+                      ) ? (
+                        <button
+                          type="button"
+                          onClick={() => setRequestDelayMs(500)}
+                          disabled={!preferencesHydrated}
+                          className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                        >
+                          把请求间隔设为 500 ms
+                        </button>
+                      ) : null}
+                      {translationPreflightSummary.warnings.some(
+                        (issue) => issue.code === "request-errors-with-large-context",
+                      ) ? (
+                        <button
+                          type="button"
+                          onClick={() => setContextSize(DEFAULT_TRANSLATION_CONTEXT_SIZE)}
+                          disabled={!preferencesHydrated}
+                          className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100"
+                        >
+                          把上下文调回默认
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
 
                   <div className="mt-4 rounded-[20px] border border-[color:var(--line)] bg-white/80 p-4">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -2871,7 +3036,7 @@ export function LibraryWorkspace() {
                               type="button"
                               onClick={handleResumeLastBatchSession}
                               disabled={
-                                !hasTranslationConfig ||
+                                !canRunTranslation ||
                                 isTranslating ||
                                 !canResumeBatchSession
                               }
@@ -3133,7 +3298,7 @@ export function LibraryWorkspace() {
                                       onClick={() => handleRetryFailedCategory(group.category)}
                                       disabled={
                                         !group.retryable ||
-                                        !hasTranslationConfig ||
+                                        !canRunTranslation ||
                                         isTranslating
                                       }
                                       className="inline-flex items-center justify-center gap-2 rounded-full bg-[color:var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[color:var(--accent-strong)] disabled:cursor-not-allowed disabled:bg-stone-300"
@@ -3554,7 +3719,7 @@ export function LibraryWorkspace() {
                       <button
                         type="button"
                         onClick={() => void handleTranslateBook()}
-                        disabled={!hasTranslationConfig || batchQueuePreview.length === 0}
+                        disabled={!canRunTranslation || batchQueuePreview.length === 0}
                         className="inline-flex items-center justify-center gap-2 rounded-full bg-[color:var(--accent)] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[color:var(--accent-strong)] disabled:cursor-not-allowed disabled:bg-stone-300"
                       >
                         <WandSparkles className="h-4 w-4" />
@@ -3633,9 +3798,10 @@ export function LibraryWorkspace() {
                       </p>
                     ) : null}
 
-                    {!hasTranslationConfig ? (
+                    {!canRunTranslation ? (
                       <p className="mt-3 text-sm leading-6 text-[color:var(--muted)]">
-                        当前还不能直接处理这段。先去设置页补全 API Key、Base URL 和模型配置。
+                        {primaryBlockingPreflightIssue?.description ??
+                          "当前还不能直接处理这段。先去设置页补全 API Key、Base URL 和模型配置。"}
                       </p>
                     ) : null}
 
@@ -3644,7 +3810,7 @@ export function LibraryWorkspace() {
                         type="button"
                         onClick={() => void handleRetranslateParagraph(targetedParagraph.index)}
                         disabled={
-                          !hasTranslationConfig ||
+                          !canRunTranslation ||
                           isTranslating ||
                           targetedParagraph.translationStatus === "translating"
                         }
@@ -3733,7 +3899,7 @@ export function LibraryWorkspace() {
                       type="button"
                       onClick={() => void handleRetranslateParagraph(paragraph.index)}
                       disabled={
-                        !hasTranslationConfig ||
+                        !canRunTranslation ||
                         isTranslating ||
                         paragraph.translationStatus === "translating"
                       }
