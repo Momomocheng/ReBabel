@@ -203,7 +203,7 @@ test("desktop workflow covers import, translation, notes, review checklist, and 
   await page.getByLabel("当前段落批注").fill(bookmarkNote);
   await page.getByRole("button", { name: "保存批注" }).click();
   await expect(page.getByText("已保存第 1 段批注。")).toBeVisible();
-  await expect(page.getByText(bookmarkNote)).toBeVisible();
+  await expect(page.getByText(bookmarkNote).nth(1)).toBeVisible();
 
   const [notesDownload] = await Promise.all([
     page.waitForEvent("download"),
@@ -217,7 +217,7 @@ test("desktop workflow covers import, translation, notes, review checklist, and 
 
   await page.getByLabel("导入阅读笔记 JSON").setInputFiles(notesPath);
   await expect(page.getByText(/已导入 1 条阅读笔记/)).toBeVisible();
-  await expect(page.getByText(bookmarkNote)).toBeVisible();
+  await expect(page.getByText(bookmarkNote).nth(1)).toBeVisible();
 
   await page.getByLabel("站内搜索").fill("冬天");
   await page.getByRole("button", { name: "更新搜索链接" }).click();
