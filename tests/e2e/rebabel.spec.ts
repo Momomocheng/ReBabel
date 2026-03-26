@@ -224,7 +224,11 @@ test("desktop workflow covers import, translation, notes, review checklist, and 
   await expect(page.getByText(/已更新搜索链接，当前命中 \d+ 段。/)).toBeVisible();
   await expect(page.getByText("中文命中").first()).toBeVisible();
 
-  await page.getByRole("button", { name: "标记已复核" }).first().click();
+  await page
+    .locator("button:enabled")
+    .filter({ hasText: /^标记已复核$/ })
+    .first()
+    .click();
   await expect(page.getByText(/已将第 \d+ 段标记为已复核。/)).toBeVisible();
 
   const [checklistDownload] = await Promise.all([
