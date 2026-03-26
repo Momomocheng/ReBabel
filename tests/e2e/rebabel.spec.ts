@@ -354,3 +354,63 @@ test("reader keeps search filter and deep link after reload", async ({
     .click();
   await expect(page.getByText("书籍已从当前浏览器的本地书库删除。")).toBeVisible();
 });
+
+test("mobile workflow supports import, translation, and reader navigation", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    !testInfo.project.name.includes("mobile"),
+    "This workflow targets the mobile viewport specifically.",
+  );
+  test.setTimeout(120_000);
+
+  await installMockTranslationRoute(page);
+  await configureSettings(page);
+  await importSampleBook(page, "Mobile Workflow Sample", {
+    testInfo,
+    screenshotName: "mobile-import-draft",
+  });
+
+  await translateCurrentBook(page, {
+    testInfo,
+    screenshotName: "mobile-library-translated",
+  });
+
+  const hasLibraryOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > window.innerWidth + 4,
+  );
+  expect(hasLibraryOverflow).toBe(false);
+
+  await page.getByRole("link", { name: "进入阅读器" }).click();
+  await expect(page).toHaveURL(/\/reader/);
+  await expect(page.getByText("Mobile Workflow Sample").first()).toBeVisible();
+  await expect(page.getByText("【测试译文】", { exact: false }).first()).toBeVisible();
+
+  await page.getByRole("button", { name: "跳到末尾" }).click();
+  await expect(page.getByText("当前读到第 6 段")).toBeVisible();
+
+  await page.getByLabel("站内搜索").fill("winter");
+  await page.getByRole("button", { name: "更新搜索链接" }).click();
+  await expect(page.getByText(/已更新搜索链接，当前命中 2 段。/)).toBeVisible();
+
+  await page.getByRole("button", { name: /搜索命中 \(\d+\)/ }).click();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("filter"))
+    .toBe("search-results");
+
+  await page.getByRole("button", { name: "下一处命中" }).click();
+  await expect(page.getByText(/当前读到第 [25] 段/)).toBeVisible();
+  await attachScreenshot(page, testInfo, "mobile-reader-search-results");
+
+  const hasReaderOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > window.innerWidth + 4,
+  );
+  expect(hasReaderOverflow).toBe(false);
+
+  await page.getByRole("link", { name: "返回书库" }).click();
+  await expect(page).toHaveURL(/\/library/);
+  await page
+    .getByRole("button", { name: "删除 Mobile Workflow Sample" })
+    .click();
+  await expect(page.getByText("书籍已从当前浏览器的本地书库删除。")).toBeVisible();
+});
