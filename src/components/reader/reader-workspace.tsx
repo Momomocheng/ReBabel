@@ -80,6 +80,20 @@ type ParagraphGlossaryMatch = {
   targetMatches: GlossaryMatch[];
 };
 
+type ReviewChecklistImportPreview = {
+  fileName: string;
+  importedBook: {
+    id: string;
+    originalFileName: string;
+    title: string;
+  } | null;
+  isDifferentBook: boolean;
+  mergeResult: ReturnType<typeof mergeBookReviewChecklist>;
+  targetBookId: string;
+  targetBookUpdatedAt: string;
+  totalItemCount: number;
+};
+
 type SearchNavigationDirection = "next" | "previous";
 type ReaderParagraphScope = "book" | "section";
 type ReaderParagraphFilter =
@@ -270,6 +284,49 @@ function getReviewStatusNoticeLabel(status: TranslationReviewStatus) {
     default:
       return "待复查";
   }
+}
+
+function formatParagraphNumberLabel(paragraphIndex: number) {
+  return `第 ${paragraphIndex + 1} 段`;
+}
+
+function getReviewChecklistMergeSummary(
+  result: ReturnType<typeof mergeBookReviewChecklist>,
+) {
+  const successSegments: string[] = [];
+  const skippedSegments: string[] = [];
+  const changeCount = result.updatedReviewCount + result.mergedBookmarkCount;
+  const skippedCount =
+    result.skippedTranslationMismatchCount +
+    result.skippedSourceMismatchCount +
+    result.skippedMissingParagraphCount;
+
+  if (result.updatedReviewCount > 0) {
+    successSegments.push(`更新 ${result.updatedReviewCount} 条复查状态`);
+  }
+
+  if (result.mergedBookmarkCount > 0) {
+    successSegments.push(`合并 ${result.mergedBookmarkCount} 条批注`);
+  }
+
+  if (result.skippedTranslationMismatchCount > 0) {
+    skippedSegments.push(`${result.skippedTranslationMismatchCount} 段译文已变化`);
+  }
+
+  if (result.skippedSourceMismatchCount > 0) {
+    skippedSegments.push(`${result.skippedSourceMismatchCount} 段原文不匹配`);
+  }
+
+  if (result.skippedMissingParagraphCount > 0) {
+    skippedSegments.push(`${result.skippedMissingParagraphCount} 段超出当前书范围`);
+  }
+
+  return {
+    changeCount,
+    skippedCount,
+    skippedSegments,
+    successSegments,
+  };
 }
 
 function findSearchResultIndex(
@@ -496,6 +553,8 @@ export function ReaderWorkspace() {
     useState<ReaderParagraphFilter>(paragraphFilterFromUrl);
   const [paragraphScope, setParagraphScope] =
     useState<ReaderParagraphScope>(paragraphScopeFromUrl);
+  const [reviewChecklistImportPreview, setReviewChecklistImportPreview] =
+    useState<ReviewChecklistImportPreview | null>(null);
   const [searchInput, setSearchInput] = useState(searchQueryFromUrl);
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -909,6 +968,15 @@ export function ReaderWorkspace() {
   );
   const hasNarrowedReaderView =
     paragraphFilter !== "all" || paragraphScope === "section";
+  const reviewChecklistImportPreviewChangeCount = reviewChecklistImportPreview
+    ? reviewChecklistImportPreview.mergeResult.updatedReviewCount +
+      reviewChecklistImportPreview.mergeResult.mergedBookmarkCount
+    : 0;
+  const reviewChecklistImportPreviewSkippedCount = reviewChecklistImportPreview
+    ? reviewChecklistImportPreview.mergeResult.skippedTranslationMismatchCount +
+      reviewChecklistImportPreview.mergeResult.skippedSourceMismatchCount +
+      reviewChecklistImportPreview.mergeResult.skippedMissingParagraphCount
+    : 0;
   const filteredNavigationLabel =
     paragraphFilter === "all"
       ? paragraphScope === "section"
@@ -1062,6 +1130,16 @@ export function ReaderWorkspace() {
 
     return () => window.clearTimeout(timer);
   }, [notice]);
+
+  useEffect(() => {
+    setReviewChecklistImportPreview((current) =>
+      current &&
+      (current.targetBookId !== selectedBook?.id ||
+        current.targetBookUpdatedAt !== selectedBook?.updatedAt)
+        ? null
+        : current,
+    );
+  }, [selectedBook?.id, selectedBook?.updatedAt]);
 
   useEffect(() => {
     setSearchInput(searchQueryFromUrl);
@@ -1257,8 +1335,10 @@ export function ReaderWorkspace() {
       await saveBook(nextBook);
       setError("");
       setNotice(successMessage);
+      return true;
     } catch {
       setError(failureMessage);
+      return false;
     }
   }
 
@@ -1725,66 +1805,85 @@ export function ReaderWorkspace() {
     try {
       const importedChecklist = parseReaderReviewChecklistImport(await file.text());
       const importedBook = importedChecklist.book;
-      const looksLikeDifferentBook =
+      const isDifferentBook = Boolean(
         importedBook &&
         ((importedBook.id && importedBook.id !== selectedBook.id) ||
           (importedBook.originalFileName &&
-            importedBook.originalFileName !== selectedBook.originalFileName));
+            importedBook.originalFileName !== selectedBook.originalFileName)),
+      );
+      const mergeResult = mergeBookReviewChecklist(selectedBook, importedChecklist.items);
+      const mergeSummary = getReviewChecklistMergeSummary(mergeResult);
 
-      if (
-        looksLikeDifferentBook &&
-        !window.confirm(
-          `导入文件看起来来自《${importedBook.title || importedBook.originalFileName || "另一本文档"}》。继续导入只会按段落编号和原文内容匹配到当前书，是否继续？`,
-        )
-      ) {
-        return;
-      }
-
-      const result = mergeBookReviewChecklist(selectedBook, importedChecklist.items);
-      const successSegments: string[] = [];
-      const skippedSegments: string[] = [];
-
-      if (result.updatedReviewCount > 0) {
-        successSegments.push(`更新 ${result.updatedReviewCount} 条复查状态`);
-      }
-
-      if (result.mergedBookmarkCount > 0) {
-        successSegments.push(`合并 ${result.mergedBookmarkCount} 条批注`);
-      }
-
-      if (result.skippedTranslationMismatchCount > 0) {
-        skippedSegments.push(`${result.skippedTranslationMismatchCount} 段译文已变化`);
-      }
-
-      if (result.skippedSourceMismatchCount > 0) {
-        skippedSegments.push(`${result.skippedSourceMismatchCount} 段原文不匹配`);
-      }
-
-      if (result.skippedMissingParagraphCount > 0) {
-        skippedSegments.push(`${result.skippedMissingParagraphCount} 段超出当前书范围`);
-      }
-
-      if (successSegments.length === 0) {
-        setNotice("");
-        setError(
-          skippedSegments.length > 0
-            ? `复查清单没有导入任何变更：${skippedSegments.join("，")}。`
-            : "复查清单没有带来任何变更。",
-        );
-        return;
-      }
-
-      await persistReaderBook(
-        result.book,
-        `已导入复查清单：${successSegments.join("，")}。${
-          skippedSegments.length > 0 ? ` 已跳过 ${skippedSegments.join("，")}。` : ""
-        }`,
-        "导入复查清单失败，请稍后重试。",
+      setReviewChecklistImportPreview({
+        fileName: file.name,
+        importedBook,
+        isDifferentBook,
+        mergeResult,
+        targetBookId: selectedBook.id,
+        targetBookUpdatedAt: selectedBook.updatedAt,
+        totalItemCount: importedChecklist.items.length,
+      });
+      setError("");
+      setNotice(
+        mergeSummary.changeCount > 0
+          ? `已载入复查清单预览：确认后会写回 ${mergeSummary.changeCount} 处变更。`
+          : "已载入复查清单预览，但当前没有可应用变更。",
       );
     } catch (importError) {
+      setReviewChecklistImportPreview(null);
       setError(importError instanceof Error ? importError.message : "导入复查清单失败。");
     } finally {
       event.target.value = "";
+    }
+  }
+
+  function handleDismissReviewChecklistImportPreview() {
+    setReviewChecklistImportPreview(null);
+    setError("");
+    setNotice("已取消这次复查清单导入预览。");
+  }
+
+  async function handleApplyReviewChecklistImportPreview() {
+    if (!selectedBook || !reviewChecklistImportPreview) {
+      return;
+    }
+
+    if (
+      reviewChecklistImportPreview.targetBookId !== selectedBook.id ||
+      reviewChecklistImportPreview.targetBookUpdatedAt !== selectedBook.updatedAt
+    ) {
+      setReviewChecklistImportPreview(null);
+      setNotice("");
+      setError("当前书籍内容已经变化，之前的复查清单预览已失效，请重新载入。");
+      return;
+    }
+
+    const mergeSummary = getReviewChecklistMergeSummary(
+      reviewChecklistImportPreview.mergeResult,
+    );
+
+    if (mergeSummary.changeCount === 0) {
+      setNotice("");
+      setError(
+        mergeSummary.skippedSegments.length > 0
+          ? `复查清单没有导入任何变更：${mergeSummary.skippedSegments.join("，")}。`
+          : "复查清单没有带来任何变更。",
+      );
+      return;
+    }
+
+    const isSaved = await persistReaderBook(
+      reviewChecklistImportPreview.mergeResult.book,
+      `已导入复查清单：${mergeSummary.successSegments.join("，")}。${
+        mergeSummary.skippedSegments.length > 0
+          ? ` 已跳过 ${mergeSummary.skippedSegments.join("，")}。`
+          : ""
+      }`,
+      "导入复查清单失败，请稍后重试。",
+    );
+
+    if (isSaved) {
+      setReviewChecklistImportPreview(null);
     }
   }
 
@@ -2827,6 +2926,219 @@ export function ReaderWorkspace() {
                     </button>
                   </div>
                 </div>
+                {reviewChecklistImportPreview ? (
+                  <div className="mt-3 rounded-[20px] border border-[color:var(--line)] bg-white/85 p-4">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold">
+                          导入预览 · {reviewChecklistImportPreview.fileName}
+                        </p>
+                        <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                          共读取 {reviewChecklistImportPreview.totalItemCount} 条清单，
+                          匹配到 {reviewChecklistImportPreview.mergeResult.matchedParagraphCount} 段。
+                          {reviewChecklistImportPreviewChangeCount > 0
+                            ? ` 确认后会写回 ${reviewChecklistImportPreviewChangeCount} 处变更。`
+                            : " 当前没有可应用变更。"}
+                        </p>
+                        {reviewChecklistImportPreview.importedBook ? (
+                          <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                            来源书籍：
+                            {reviewChecklistImportPreview.importedBook.title ||
+                              reviewChecklistImportPreview.importedBook.originalFileName ||
+                              "未命名文档"}
+                          </p>
+                        ) : null}
+                        {reviewChecklistImportPreview.isDifferentBook ? (
+                          <p className="mt-2 text-xs leading-6 text-amber-700">
+                            这份清单的元数据看起来不是当前这本书；系统只会对“段落编号存在且原文一致”的内容生效，其余条目会自动跳过。
+                          </p>
+                        ) : null}
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={handleDismissReviewChecklistImportPreview}
+                          className="inline-flex items-center justify-center rounded-full border border-[color:var(--line)] bg-white px-4 py-2 text-sm font-semibold transition hover:bg-stone-50"
+                        >
+                          取消预览
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleApplyReviewChecklistImportPreview()}
+                          disabled={reviewChecklistImportPreviewChangeCount === 0}
+                          className="inline-flex items-center justify-center rounded-full bg-[color:var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[color:var(--accent-strong)] disabled:cursor-not-allowed disabled:bg-stone-300"
+                        >
+                          确认导入到当前书
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] px-4 py-4">
+                        <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                          可写回变更
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold">
+                          {reviewChecklistImportPreviewChangeCount}
+                        </p>
+                        <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                          将更新复查状态或合并批注
+                        </p>
+                      </div>
+                      <div className="rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] px-4 py-4">
+                        <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                          复查状态更新
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold">
+                          {reviewChecklistImportPreview.mergeResult.updatedReviewCount}
+                        </p>
+                        <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                          译文一致时才会回写
+                        </p>
+                      </div>
+                      <div className="rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] px-4 py-4">
+                        <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                          批注合并
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold">
+                          {reviewChecklistImportPreview.mergeResult.mergedBookmarkCount}
+                        </p>
+                        <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                          会写入或更新对应书签
+                        </p>
+                      </div>
+                      <div className="rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] px-4 py-4">
+                        <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                          已跳过
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold">
+                          {reviewChecklistImportPreviewSkippedCount}
+                        </p>
+                        <p className="mt-1 text-xs leading-6 text-[color:var(--muted)]">
+                          原文不匹配、译文变化或段落缺失
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 xl:grid-cols-3">
+                      {reviewChecklistImportPreview.mergeResult
+                        .reviewUpdateParagraphIndexes.length > 0 ? (
+                        <div className="rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] p-4">
+                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                            将更新复查状态
+                          </p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {reviewChecklistImportPreview.mergeResult.reviewUpdateParagraphIndexes
+                              .slice(0, 6)
+                              .map((paragraphIndex) => (
+                                <span
+                                  key={`review-preview-update-${paragraphIndex}`}
+                                  className="rounded-full bg-sky-100 px-3 py-1 text-[11px] font-semibold text-sky-800"
+                                >
+                                  {formatParagraphNumberLabel(paragraphIndex)}
+                                </span>
+                              ))}
+                            {reviewChecklistImportPreview.mergeResult
+                              .reviewUpdateParagraphIndexes.length > 6 ? (
+                              <span className="rounded-full bg-stone-200 px-3 py-1 text-[11px] font-semibold text-stone-700">
+                                还有{" "}
+                                {reviewChecklistImportPreview.mergeResult
+                                  .reviewUpdateParagraphIndexes.length - 6}{" "}
+                                段
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {reviewChecklistImportPreview.mergeResult
+                        .bookmarkMergeParagraphIndexes.length > 0 ? (
+                        <div className="rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] p-4">
+                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                            将合并批注
+                          </p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {reviewChecklistImportPreview.mergeResult.bookmarkMergeParagraphIndexes
+                              .slice(0, 6)
+                              .map((paragraphIndex) => (
+                                <span
+                                  key={`review-preview-bookmark-${paragraphIndex}`}
+                                  className="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-semibold text-amber-800"
+                                >
+                                  {formatParagraphNumberLabel(paragraphIndex)}
+                                </span>
+                              ))}
+                            {reviewChecklistImportPreview.mergeResult
+                              .bookmarkMergeParagraphIndexes.length > 6 ? (
+                              <span className="rounded-full bg-stone-200 px-3 py-1 text-[11px] font-semibold text-stone-700">
+                                还有{" "}
+                                {reviewChecklistImportPreview.mergeResult
+                                  .bookmarkMergeParagraphIndexes.length - 6}{" "}
+                                段
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {reviewChecklistImportPreviewSkippedCount > 0 ? (
+                        <div className="rounded-[18px] border border-[color:var(--line)] bg-[color:var(--panel)] p-4">
+                          <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--muted)]">
+                            将跳过的内容
+                          </p>
+                          <div className="mt-3 space-y-2 text-xs leading-6 text-[color:var(--muted)]">
+                            {reviewChecklistImportPreview.mergeResult
+                              .skippedTranslationMismatchCount > 0 ? (
+                              <p>
+                                译文已变化：
+                                {reviewChecklistImportPreview.mergeResult
+                                  .skippedTranslationMismatchParagraphIndexes
+                                  .slice(0, 4)
+                                  .map(formatParagraphNumberLabel)
+                                  .join("、")}
+                                {reviewChecklistImportPreview.mergeResult
+                                  .skippedTranslationMismatchCount > 4
+                                  ? ` 等 ${reviewChecklistImportPreview.mergeResult.skippedTranslationMismatchCount} 段`
+                                  : ""}
+                              </p>
+                            ) : null}
+                            {reviewChecklistImportPreview.mergeResult
+                              .skippedSourceMismatchCount > 0 ? (
+                              <p>
+                                原文不匹配：
+                                {reviewChecklistImportPreview.mergeResult
+                                  .skippedSourceMismatchParagraphIndexes
+                                  .slice(0, 4)
+                                  .map(formatParagraphNumberLabel)
+                                  .join("、")}
+                                {reviewChecklistImportPreview.mergeResult
+                                  .skippedSourceMismatchCount > 4
+                                  ? ` 等 ${reviewChecklistImportPreview.mergeResult.skippedSourceMismatchCount} 段`
+                                  : ""}
+                              </p>
+                            ) : null}
+                            {reviewChecklistImportPreview.mergeResult
+                              .skippedMissingParagraphCount > 0 ? (
+                              <p>
+                                超出当前书范围：
+                                {reviewChecklistImportPreview.mergeResult
+                                  .skippedMissingParagraphIndexes
+                                  .slice(0, 4)
+                                  .map(formatParagraphNumberLabel)
+                                  .join("、")}
+                                {reviewChecklistImportPreview.mergeResult
+                                  .skippedMissingParagraphCount > 4
+                                  ? ` 等 ${reviewChecklistImportPreview.mergeResult.skippedMissingParagraphCount} 段`
+                                  : ""}
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
                 {hasNarrowedReaderView ? (
                   <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <p className="text-xs leading-6 text-[color:var(--muted)]">

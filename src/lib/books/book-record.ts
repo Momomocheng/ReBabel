@@ -395,15 +395,21 @@ export function mergeBookReviewChecklist(
   let matchedParagraphCount = 0;
   let mergedBookmarkCount = 0;
   let updatedReviewCount = 0;
+  const bookmarkMergeParagraphIndexes: number[] = [];
+  const reviewUpdateParagraphIndexes: number[] = [];
   let skippedMissingParagraphCount = 0;
+  const skippedMissingParagraphIndexes: number[] = [];
   let skippedSourceMismatchCount = 0;
+  const skippedSourceMismatchParagraphIndexes: number[] = [];
   let skippedTranslationMismatchCount = 0;
+  const skippedTranslationMismatchParagraphIndexes: number[] = [];
 
   itemByParagraphIndex.forEach((item, paragraphIndex) => {
     const paragraphArrayIndex = paragraphArrayIndexByIndex.get(paragraphIndex);
 
     if (paragraphArrayIndex === undefined) {
       skippedMissingParagraphCount += 1;
+      skippedMissingParagraphIndexes.push(paragraphIndex);
       return;
     }
 
@@ -414,6 +420,7 @@ export function mergeBookReviewChecklist(
       normalizeParagraphText(item.sourceText)
     ) {
       skippedSourceMismatchCount += 1;
+      skippedSourceMismatchParagraphIndexes.push(paragraphIndex);
       return;
     }
 
@@ -434,6 +441,7 @@ export function mergeBookReviewChecklist(
         });
         bookmarkArrayIndexByIndex.set(paragraphIndex, nextBookmarks.length - 1);
         mergedBookmarkCount += 1;
+        bookmarkMergeParagraphIndexes.push(paragraphIndex);
       } else if (nextBookmarks[bookmarkArrayIndex]!.note !== importedBookmarkNote) {
         nextBookmarks[bookmarkArrayIndex] = {
           ...nextBookmarks[bookmarkArrayIndex]!,
@@ -441,6 +449,7 @@ export function mergeBookReviewChecklist(
           updatedAt: now,
         };
         mergedBookmarkCount += 1;
+        bookmarkMergeParagraphIndexes.push(paragraphIndex);
       }
     }
 
@@ -456,6 +465,7 @@ export function mergeBookReviewChecklist(
       normalizeParagraphText(item.translatedText)
     ) {
       skippedTranslationMismatchCount += 1;
+      skippedTranslationMismatchParagraphIndexes.push(paragraphIndex);
       return;
     }
 
@@ -468,6 +478,7 @@ export function mergeBookReviewChecklist(
       reviewStatus: item.reviewStatus,
     });
     updatedReviewCount += 1;
+    reviewUpdateParagraphIndexes.push(paragraphIndex);
   });
 
   const hasChanges = mergedBookmarkCount > 0 || updatedReviewCount > 0;
@@ -481,11 +492,16 @@ export function mergeBookReviewChecklist(
           paragraphs: nextParagraphs,
         })
       : book,
+    bookmarkMergeParagraphIndexes,
     matchedParagraphCount,
     mergedBookmarkCount,
     skippedMissingParagraphCount,
+    skippedMissingParagraphIndexes,
     skippedSourceMismatchCount,
+    skippedSourceMismatchParagraphIndexes,
     skippedTranslationMismatchCount,
+    skippedTranslationMismatchParagraphIndexes,
+    reviewUpdateParagraphIndexes,
     updatedReviewCount,
   };
 }
